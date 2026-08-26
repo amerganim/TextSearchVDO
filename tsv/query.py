@@ -468,6 +468,7 @@ def ask(
     embed_text=None,
     today: date | None = None,
     limit: int = 20,
+    min_similarity: float | None = None,
 ) -> AskResult:
     """Answer a question, ranking as a fallback.
 
@@ -496,5 +497,6 @@ def ask(
             query_vector=vector,
             filters=plan.filters if plan.grounded else SearchFilters(),
             limit=limit,
+            min_similarity=min_similarity,
         )
     return result

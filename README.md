@@ -29,6 +29,30 @@ filters, fused into one ranked answer.
 the front door yesterday* returns two timestamps and the clips to play, rather
 than forty segments to scroll. Captioning and audio are not built yet.
 
+## The app
+
+Double-click **TextSearchVDO.bat**, or:
+
+```bash
+.venv/Scripts/python -m tsv app
+```
+
+A native window opens. Drop a video on it, wait while it reads it, then type
+what you are looking for. Results come back as frames with times; clicking one
+plays from just before that moment. If nothing matches, it says so rather than
+handing back the closest three frames in the library.
+
+The window is the same server the CLI runs, in a WebView2 frame. That keeps
+one implementation rather than two — the window, a plain browser and the
+planned Android client all talk to the same endpoints. What the window adds is
+a native file dialog that returns real paths, so **a video is indexed where it
+already lives** rather than being uploaded to the machine it is already on. A
+browser can still be used (`python -m tsv serve`); there it uploads, because
+there is no path to point at.
+
+The full timeline, zone editor and people tools are behind **Advanced** in the
+corner, or at `/advanced`.
+
 ## Architecture
 
 The design is **index → retrieve → verify**, not summarise-then-search. A
@@ -219,9 +243,20 @@ python -m tsv search "a person carrying a box" --limit 10
 python -m tsv search --who Rafi --zone "front door"
 ```
 
-Absolute CLIP scores are not calibrated, so there is no default similarity
-floor - `--min-similarity` exists and the score is always shown, so a useful
-floor can be picked by looking at real numbers rather than guessed here.
+### Where the similarity floor lives
+
+The library has **no** default similarity floor. Absolute CLIP scores are not
+calibrated, and a caller that can see the scores should choose its own, so
+`--min-similarity` exists and the score is always reported.
+
+The **app** does apply one (`ClipConfig.min_similarity`, currently `0.20`),
+because it cannot afford not to: its whole promise is an answer or an honest
+nothing, and a search box that returns the closest three frames for *a snowy
+mountain* reads as broken. The number is shown to the user as a percentage on
+every result and is one line to change. It comes from measurement but on few
+samples — a matching query scored 0.22–0.27 and an unrelated one 0.15 — so
+expect to move it once real footage has been through it. Queries do slip
+through: *"a helicopter landing"* scores 0.22 against a person walking.
 
 ## Stage 4: asking questions
 
@@ -440,6 +475,11 @@ tsv/models/clip.py       CLIP image/text encoders
 tsv/models/tokenizer.py  CLIP byte-level BPE, pure Python
 tsv/search.py            filters, lexical, semantic, rank fusion
 tsv/query.py             question parsing and answering
+tsv/importer.py          one call: ingest, analyse, index
+tsv/jobs.py              background work with progress
+tsv/desktop.py           the native window
+web/app.html             the simple app
+web/index.html           the advanced timeline UI
 tsv/api.py               FastAPI: timeline, segments, objects, ranged media
 tsv/config.py            every tunable, grouped by stage
 web/                     timeline UI

@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TextSearchVDO</title>
+  <link rel="stylesheet" href="/static/simple.css">
+</head>
+<body>
+  <header>
+    <div class="brand">TextSearchVDO</div>
+    <div class="library" id="library"></div>
+    <button type="button" class="ghost" id="add-more" hidden>Add video</button>
+    <a class="ghost link" href="/advanced" title="Timeline, zones and people">Advanced</a>
+  </header>
+
+  <!-- 1. Nothing indexed yet -->
+  <section class="stage" id="stage-empty">
+    <div class="dropzone" id="dropzone">
+      <div class="drop-icon" aria-hidden="true">&#9634;</div>
+      <h1>Drop a video here</h1>
+      <p>or <button type="button" class="linkish" id="browse">choose a file</button></p>
+      <p class="fine">
+        Long recordings are fine. Most of a CCTV file is nothing happening, and
+        that part is skipped rather than watched.
+      </p>
+    </div>
+  </section>
+
+  <!-- 2. Working -->
+  <section class="stage" id="stage-working" hidden>
+    <div class="working">
+      <h2 id="work-title">Reading the video</h2>
+      <div class="bar"><div class="fill" id="work-fill"></div></div>
+      <div class="work-stage" id="work-stage"></div>
+      <div class="work-message" id="work-message"></div>
+      <p class="fine" id="work-hint">
+        This runs entirely on your machine, so it takes about as long as the
+        video is interesting. You can leave it running.
+      </p>
+    </div>
+  </section>
+
+  <!-- 3. Ready to search -->
+  <section class="stage" id="stage-ready" hidden>
+    <div class="searchrow">
+      <input id="q" type="search" autocomplete="off" spellcheck="false"
+             placeholder="What are you looking for? e.g. a person carrying a box">
+      <button type="button" id="go">Search</button>
+    </div>
+    <div class="examples" id="examples"></div>
+
+    <div class="answer" id="answer" hidden>
+      <div class="answer-headline" id="answer-headline"></div>
+      <div class="answer-caveat" id="answer-caveat" hidden></div>
+    </div>
+
+    <div class="status" id="status"></div>
+    <div class="results" id="results"></div>
+
+    <div class="nothing" id="nothing" hidden>
+      <h2>Nothing found</h2>
+      <p id="nothing-why"></p>
+    </div>
+  </section>
+
+  <!-- Player -->
+  <div class="player-backdrop" id="player-backdrop" hidden>
+    <div class="player-box">
+      <div class="player-head">
+        <span id="player-caption"></span>
+        <button type="button" class="ghost" id="player-close">Close</button>
+      </div>
+      <video id="video" controls preload="metadata"></video>
+    </div>
+  </div>
+
+  <input type="file" id="filepick" accept="video/*" multiple hidden>
+  <script src="/static/simple.js"></script>
+</body>
+</html>

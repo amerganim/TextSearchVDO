@@ -146,6 +146,20 @@ class ClipConfig:
     # preprocessing at the cost of a standing person's head and feet.
     crop_mode: str = "pad"
     force_backend: str | None = None
+    # Semantic matches below this cosine score are discarded, so a query for
+    # something that is not there answers "nothing found" instead of handing
+    # back the closest three frames in the library.
+    #
+    # The library deliberately has no default floor - a caller that can see
+    # the scores should choose its own. An app cannot: its whole promise is an
+    # answer or an honest nothing, and ranking everything forever reads as
+    # broken. So the number lives here, is shown to the user as a percentage
+    # on every result, and is one line to change.
+    #
+    # 0.20 comes from measurement, but on few samples: a matching query scored
+    # 0.22-0.27 and an unrelated one 0.15. Expect to move it once real footage
+    # and real questions have been through it.
+    min_similarity: float = 0.20
 
 
 @dataclass(frozen=True)

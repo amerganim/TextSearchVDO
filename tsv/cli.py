@@ -421,6 +421,18 @@ def cmd_stats(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_app(args: argparse.Namespace) -> int:
+    """Open the desktop window."""
+    cfg = _config(args)
+    try:
+        from tsv.desktop import run
+    except ImportError:
+        print("the desktop window needs pywebview:")
+        print("  .venv/Scripts/python -m pip install pywebview")
+        return 1
+    return run(cfg)
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     import uvicorn
 
@@ -527,7 +539,10 @@ def main(argv: list[str] | None = None) -> int:
     p_stats = sub.add_parser("stats", help="what is in the index")
     p_stats.set_defaults(func=cmd_stats)
 
-    p_serve = sub.add_parser("serve", help="run the timeline UI")
+    p_app = sub.add_parser("app", help="open the desktop window")
+    p_app.set_defaults(func=cmd_app)
+
+    p_serve = sub.add_parser("serve", help="run the web UI without a window")
     p_serve.add_argument("--host", default="127.0.0.1")
     p_serve.add_argument("--port", type=int, default=8000)
     p_serve.set_defaults(func=cmd_serve)

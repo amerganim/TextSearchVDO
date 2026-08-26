@@ -12,7 +12,7 @@ from datetime import date, datetime, time as dtime, timedelta
 from pathlib import Path
 
 import cv2
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel, Field
 
@@ -23,8 +23,14 @@ from tsv.identity import (
     assign_identities, delete_identity, enroll_tracklet, list_identities,
 )
 from tsv.models.clip import build_clip
+from tsv.importer import import_videos, stage_video
+from tsv.jobs import JobRunner
 from tsv.query import ask as run_ask
 from tsv.search import SearchFilters, rebuild_text_index, search as run_search
+
+
+class ImportIn(BaseModel):
+    path: str
 
 
 class EnrollIn(BaseModel):
@@ -86,6 +92,8 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
     # One handle per worker thread; see db.ThreadLocalConnection.
     conn = db.open_threadlocal(cfg.db_path)
 
+    jobs = JobRunner()
+
     # The text encoder is loaded once, lazily: it is only needed when someone
     # actually types something, and loading it costs a second or two.
     text_encoder: dict[str, object] = {}
@@ -106,6 +114,12 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> HTMLResponse:
+        """The simple app: drop a video, search it."""
+        return HTMLResponse((WEB_DIR / "app.html").read_text(encoding="utf-8"))
+
+    @app.get("/advanced", response_class=HTMLResponse)
+    def advanced() -> HTMLResponse:
+        """The full timeline, zone editor and people tools."""
         return HTMLResponse((WEB_DIR / "index.html").read_text(encoding="utf-8"))
 
     @app.get("/static/{name}")
@@ -345,8 +359,11 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
             zone=zone, label=label, event_kind=event_kind,
         )
         vector = _query_vector(q) if semantic else None
+        floor = (
+            min_similarity if min_similarity is not None else cfg.clip.min_similarity
+        )
         hits = run_search(conn, text=q, query_vector=vector, filters=filters,
-                          limit=limit, min_similarity=min_similarity)
+                          limit=limit, min_similarity=floor)
 
         return {
             "query": q,
@@ -366,10 +383,63 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
             ],
         }
 
+    def _start_import(path: Path) -> dict:
+        if not path.exists():
+            raise HTTPException(400, f"no such file or folder: {path}")
+
+        def work(report):
+            return import_videos(conn, path, cfg, report=report).as_dict()
+
+        job = jobs.submit("import", path.name, work)
+        return job.as_dict()
+
+    @app.post("/api/import")
+    def import_path(body: ImportIn) -> dict:
+        """Index a video already on disk, in place."""
+        return _start_import(Path(body.path).expanduser())
+
+    @app.post("/api/import/upload")
+    async def import_upload(file: UploadFile = File(...)) -> dict:
+        """Index a video arriving over HTTP.
+
+        Only used by a plain browser, where there is no path to point at. The
+        desktop window sends a path instead and nothing is copied.
+        """
+        if not file.filename:
+            raise HTTPException(400, "no filename")
+        incoming = cfg.data_dir / "incoming"
+        incoming.mkdir(parents=True, exist_ok=True)
+
+        temp = incoming / f".part-{file.filename}"
+        with temp.open("wb") as out:
+            while chunk := await file.read(1 << 20):
+                out.write(chunk)
+        return _start_import(stage_video(temp, incoming))
+
+    @app.get("/api/jobs")
+    def list_jobs() -> list[dict]:
+        return [j.as_dict() for j in jobs.all()]
+
+    @app.get("/api/jobs/{job_id}")
+    def job_status(job_id: str) -> dict:
+        job = jobs.get(job_id)
+        if job is None:
+            raise HTTPException(404)
+        return job.as_dict()
+
     @app.get("/api/ask")
-    def ask_endpoint(q: str, limit: int = Query(20, le=200)) -> dict:
+    def ask_endpoint(
+        q: str,
+        limit: int = Query(20, le=200),
+        min_similarity: float | None = None,
+    ) -> dict:
         """Answer a typed question, falling back to ranked search."""
-        result = run_ask(conn, q, embed_text=_query_vector, limit=limit)
+        floor = (
+            min_similarity if min_similarity is not None else cfg.clip.min_similarity
+        )
+        result = run_ask(
+            conn, q, embed_text=_query_vector, limit=limit, min_similarity=floor
+        )
         plan = result.plan
 
         body: dict = {
