@@ -10,61 +10,62 @@
   <header>
     <div class="brand">TextSearchVDO</div>
     <div class="library" id="library"></div>
-    <button type="button" class="ghost" id="add-more" hidden>Add video</button>
+    <button type="button" id="add">Add video</button>
     <a class="ghost link" href="/advanced" title="Timeline, zones and people">Advanced</a>
   </header>
 
-  <!-- 1. Nothing indexed yet -->
+  <!-- Always present once anything is indexed. Never hidden by processing. -->
+  <section class="searchbar" id="searchbar">
+    <input id="q" type="search" autocomplete="off" spellcheck="false"
+           placeholder="What are you looking for?">
+    <button type="button" id="go">Search</button>
+  </section>
+  <div class="examples" id="examples"></div>
+
+  <!-- Processing runs here, as a strip. It does not take over the app. -->
+  <section class="progress-strip" id="strip" hidden>
+    <div class="strip-row">
+      <span class="spinner" aria-hidden="true"></span>
+      <span class="strip-title" id="strip-title">Working</span>
+      <span class="strip-detail" id="strip-detail"></span>
+      <span class="strip-pct" id="strip-pct"></span>
+    </div>
+    <div class="bar"><div class="fill" id="strip-fill"></div></div>
+    <div class="strip-note">
+      You can search whatever has already been read while this finishes.
+    </div>
+  </section>
+
+  <div id="notices"></div>
+
+  <!-- Shown only when the library is empty. -->
   <section class="stage" id="stage-empty">
     <div class="dropzone" id="dropzone">
       <div class="drop-icon" aria-hidden="true">&#9634;</div>
-      <h1>Drop a video here</h1>
-      <p>or <button type="button" class="linkish" id="browse">choose a file</button></p>
+      <h1>Add a video to get started</h1>
+      <p><button type="button" id="choose">Choose a video</button></p>
+      <p class="or" id="or-drop">or drag one onto this window</p>
       <p class="fine">
-        Long recordings are fine. Most of a CCTV file is nothing happening, and
-        that part is skipped rather than watched.
+        Long recordings are fine. Most of a security recording is nothing
+        happening, and that part gets skipped rather than watched.
       </p>
     </div>
   </section>
 
-  <!-- 2. Working -->
-  <section class="stage" id="stage-working" hidden>
-    <div class="working">
-      <h2 id="work-title">Reading the video</h2>
-      <div class="bar"><div class="fill" id="work-fill"></div></div>
-      <div class="work-stage" id="work-stage"></div>
-      <div class="work-message" id="work-message"></div>
-      <p class="fine" id="work-hint">
-        This runs entirely on your machine, so it takes about as long as the
-        video is interesting. You can leave it running.
-      </p>
-    </div>
-  </section>
-
-  <!-- 3. Ready to search -->
-  <section class="stage" id="stage-ready" hidden>
-    <div class="searchrow">
-      <input id="q" type="search" autocomplete="off" spellcheck="false"
-             placeholder="What are you looking for? e.g. a person carrying a box">
-      <button type="button" id="go">Search</button>
-    </div>
-    <div class="examples" id="examples"></div>
-
+  <!-- Results. -->
+  <section class="stage" id="stage-results" hidden>
     <div class="answer" id="answer" hidden>
       <div class="answer-headline" id="answer-headline"></div>
       <div class="answer-caveat" id="answer-caveat" hidden></div>
     </div>
-
     <div class="status" id="status"></div>
     <div class="results" id="results"></div>
-
     <div class="nothing" id="nothing" hidden>
       <h2>Nothing found</h2>
       <p id="nothing-why"></p>
     </div>
   </section>
 
-  <!-- Player -->
   <div class="player-backdrop" id="player-backdrop" hidden>
     <div class="player-box">
       <div class="player-head">
@@ -75,7 +76,7 @@
     </div>
   </div>
 
-  <input type="file" id="filepick" accept="video/*" multiple hidden>
+  <input type="file" id="filepick" accept="video/*,.mp4,.mkv,.avi,.mov,.m4v,.ts,.dav,.flv" multiple hidden>
   <script src="/static/simple.js"></script>
 </body>
 </html>

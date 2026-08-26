@@ -121,22 +121,41 @@ def import_videos(
             f"{pending} file(s) to analyse" if pending else "nothing new to analyse",
         )
 
+    # The bar is driven by seconds of footage examined across every pending
+    # file, so it moves continuously rather than once per file or per segment.
+    total_seconds = conn.execute(
+        "SELECT COALESCE(SUM(t_end - t_start), 0) AS s FROM segments "
+        "WHERE analyzed_at IS NULL"
+    ).fetchone()["s"] or 1.0
+
     if pending:
         seen = 0
+        seconds_before = 0.0
+
+        def on_progress(done: float, total: float) -> None:
+            if not report:
+                return
+            overall = min(1.0, (seconds_before + done) / total_seconds)
+            report.step(
+                overall,
+                f"{int(seconds_before + done)}s of {int(total_seconds)}s examined",
+            )
 
         def on_analyze(item) -> None:
-            nonlocal seen
+            nonlocal seen, seconds_before
             seen += 1
+            seconds_before += item.analysed_seconds
             if item.status == "analyzed":
                 result.tracklets += item.n_tracklets
                 result.faces += item.n_faces
             elif item.status == "failed":
                 result.failed.append(f"{item.path.name}: {item.note}")
             if report:
-                report.step(seen / pending, f"{item.path.name}: {item.n_tracklets} object(s)")
+                report.say(f"{item.path.name}: {item.n_tracklets} object(s) found")
 
         try:
-            analyze_all(conn, cfg, force=force, on_result=on_analyze)
+            analyze_all(conn, cfg, force=force, on_result=on_analyze,
+                        on_progress=on_progress)
         except FileNotFoundError as exc:
             # No detector present. Motion segmentation still worked, and the
             # timeline is usable; say so rather than failing the whole import.

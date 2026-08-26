@@ -1,31 +1,33 @@
-/* The simple face of the app: drop a video, wait, search it.
+/* The simple face of the app.
  *
- * Runs in two environments and has to behave in both. Inside the desktop
- * window the file is already on disk and pywebview hands us its path, so
- * nothing is copied. In a plain browser there is no path - only a File - so it
- * uploads. The rest of the flow is identical.
+ * One page that is always usable. Importing runs in a strip at the top rather
+ * than taking the app over, because a long recording can take minutes and
+ * being locked out of a search box while you wait is worse than the wait.
+ * Motion segmentation finishes early, so there is usually something to search
+ * long before analysis ends.
+ *
+ * Two environments, one flow. In the desktop window pywebview hands us real
+ * paths and nothing is copied. In a browser there is only a File, so it
+ * uploads. Dropping files works in a browser and *not* in the desktop window,
+ * which has no drop support at all - so a drop that yields nothing says so
+ * instead of silently doing nothing.
  */
 
 const $ = (id) => document.getElementById(id);
 const api = (path, options) => fetch(path, options).then((r) => r.json());
 
-const state = { poll: null, ready: false };
+const state = { poll: null, indexed: 0, importing: false };
 
 const EXAMPLES = [
-  "a person carrying something",
-  "someone at the door",
+  "a person",
+  "someone carrying something",
   "a car",
   "a dog",
 ];
 
-/* ---------- stages ---------- */
+const inDesktop = () => Boolean(window.pywebview && window.pywebview.api);
 
-function show(stage) {
-  for (const id of ["stage-empty", "stage-working", "stage-ready"]) {
-    $(id).hidden = id !== stage;
-  }
-  $("add-more").hidden = stage !== "stage-ready";
-}
+/* ---------- chrome ---------- */
 
 function fmtDuration(seconds) {
   seconds = Math.round(seconds || 0);
@@ -37,60 +39,117 @@ function fmtDuration(seconds) {
   return `${s}s`;
 }
 
-function showError(message) {
+function notice(message, kind = "error") {
   const box = document.createElement("div");
-  box.className = "error";
-  box.textContent = message;
-  const stage = $("stage-empty").hidden ? $("stage-ready") : $("stage-empty");
-  stage.querySelectorAll(".error").forEach((e) => e.remove());
-  stage.appendChild(box);
+  box.className = `notice ${kind}`;
+  box.innerHTML = `<span>${message}</span>`;
+  const close = document.createElement("button");
+  close.className = "ghost tiny";
+  close.textContent = "Dismiss";
+  close.onclick = () => box.remove();
+  box.appendChild(close);
+  $("notices").prepend(box);
+}
+
+/** The search box is live whenever there is anything at all to search. */
+function refreshChrome() {
+  const has = state.indexed > 0;
+  $("searchbar").hidden = !has;
+  $("examples").hidden = !has;
+  $("stage-empty").hidden = has;
+  $("q").disabled = false;
 }
 
 /* ---------- importing ---------- */
 
-async function startImportFromPath(path) {
-  const body = await api("/api/import", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path }),
-  });
-  if (body.detail) return showError(body.detail);
-  watchJob(body.id);
+async function importPaths(paths) {
+  for (const path of paths) {
+    const body = await api("/api/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    });
+    if (body.detail) {
+      notice(body.detail);
+      continue;
+    }
+    watchJob(body.id);
+  }
 }
 
-async function startImportFromFiles(files) {
-  if (!files || !files.length) return;
-  show("stage-working");
-  $("work-title").textContent = "Copying the video";
-  $("work-stage").textContent = files[0].name;
-  $("work-fill").style.width = "4%";
+async function importFiles(files) {
+  if (!files || !files.length) return false;
+  showStrip("Copying " + files[0].name, 0.02, "");
 
   let last = null;
   for (const file of files) {
     const form = new FormData();
     form.append("file", file);
-    const body = await api("/api/import/upload", { method: "POST", body: form });
-    if (body.detail) return showError(body.detail);
-    last = body.id;
+    try {
+      const body = await api("/api/import/upload", { method: "POST", body: form });
+      if (body.detail) {
+        notice(body.detail);
+        continue;
+      }
+      last = body.id;
+    } catch (err) {
+      notice(`Could not read ${file.name}: ${err}`);
+    }
   }
   if (last) watchJob(last);
+  else hideStrip();
+  return true;
+}
+
+async function chooseFiles() {
+  if (inDesktop()) {
+    const paths = await window.pywebview.api.pick_videos();
+    if (paths && paths.length) importPaths(paths);
+    return;
+  }
+  $("filepick").click();
+}
+
+/* ---------- progress strip ---------- */
+
+function showStrip(title, progress, detail) {
+  state.importing = true;
+  $("strip").hidden = false;
+  $("strip-title").textContent = title;
+  $("strip-detail").textContent = detail || "";
+  $("strip-pct").textContent = `${Math.round((progress || 0) * 100)}%`;
+  $("strip-fill").style.width = `${Math.max(2, (progress || 0) * 100).toFixed(1)}%`;
+}
+
+function hideStrip() {
+  state.importing = false;
+  $("strip").hidden = true;
 }
 
 function watchJob(jobId) {
-  show("stage-working");
   clearInterval(state.poll);
+  showStrip("Reading the video", 0.02, "");
 
   state.poll = setInterval(async () => {
-    const job = await api(`/api/jobs/${jobId}`);
-    $("work-title").textContent = job.title ? `Reading ${job.title}` : "Working";
-    $("work-stage").textContent = job.stage || "";
-    $("work-message").textContent = job.message || "";
-    $("work-fill").style.width = `${Math.max(3, job.progress * 100).toFixed(1)}%`;
+    let job;
+    try {
+      job = await api(`/api/jobs/${jobId}`);
+    } catch {
+      return;                       // transient; keep polling
+    }
+    showStrip(
+      job.title ? `Reading ${job.title}` : "Working",
+      job.progress,
+      [job.stage, job.message].filter(Boolean).join(" — "),
+    );
+
+    // Whatever has been read so far is already searchable.
+    await refreshLibrary();
+    refreshChrome();
 
     if (job.status === "done") {
       clearInterval(state.poll);
-      await refreshLibrary();
-      show("stage-ready");
+      hideStrip();
       const r = job.result || {};
       const bits = [];
       if (r.duration) {
@@ -98,29 +157,29 @@ function watchJob(jobId) {
         bits.push(`${fmtDuration(r.active)} worth looking at`);
       }
       if (r.tracklets) bits.push(`${r.tracklets} object(s) found`);
-      $("status").textContent = bits.join(" · ") || "Ready.";
-      if ((r.failed || []).length) showError(r.failed.join("; "));
+      if (r.skipped) bits.push(`${r.skipped} already indexed`);
+      notice(bits.join(" &middot; ") || "Ready.", "good");
+      if ((r.failed || []).length) notice(r.failed.join("; "));
       $("q").focus();
     } else if (job.status === "failed") {
       clearInterval(state.poll);
-      show(state.ready ? "stage-ready" : "stage-empty");
-      showError(job.error || "Import failed.");
+      hideStrip();
+      notice(job.error || "That video could not be read.");
     }
-  }, 500);
+  }, 400);
 }
 
 /* ---------- searching ---------- */
 
 function renderAnswer(body) {
-  const panel = $("answer");
   const answer = body.answer;
   if (!answer || !answer.found) {
-    panel.hidden = true;
+    $("answer").hidden = true;
     $("answer-headline").textContent = "";
     $("answer-caveat").hidden = true;
     return;
   }
-  panel.hidden = false;
+  $("answer").hidden = false;
   $("answer-headline").textContent = answer.headline;
   $("answer-caveat").hidden = !body.caveat;
   $("answer-caveat").textContent = body.caveat || "";
@@ -145,7 +204,7 @@ function renderHits(hits) {
         : (h.sources || []).join(" + ");
 
       return `<button class="hit" data-video="${h.video_id}" data-t="${h.t_start}" data-when="${when}">
-        <img loading="lazy" src="/api/thumb/${h.segment_id}" alt="">
+        <img src="/api/thumb/${h.segment_id}" alt="">
         <span class="cap">
           <span class="when">${when}</span>
           <span class="sub">${objects || "movement"}</span>
@@ -164,18 +223,25 @@ async function runSearch() {
   const text = $("q").value.trim();
   if (!text) return;
 
+  $("stage-results").hidden = false;
   $("status").textContent = "Looking…";
   $("nothing").hidden = true;
   $("results").innerHTML = "";
 
-  const body = await api(`/api/ask?q=${encodeURIComponent(text)}&limit=48`);
+  let body;
+  try {
+    body = await api(`/api/ask?q=${encodeURIComponent(text)}&limit=48`);
+  } catch (err) {
+    $("status").textContent = "";
+    notice(`Search failed: ${err}`);
+    return;
+  }
   renderAnswer(body);
 
-  const answered = body.answer && body.answer.found;
   const rows = body.results || [];
+  const answered = body.answer && body.answer.found;
 
   if (answered) {
-    // An exact answer already lists its moments; show those as the frames.
     const seen = new Set();
     const fromAnswer = body.answer.rows
       .filter((r) => !seen.has(r.segment_id) && seen.add(r.segment_id))
@@ -195,8 +261,10 @@ async function runSearch() {
     $("nothing").hidden = false;
     $("nothing-why").textContent = body.answer
       ? body.answer.headline
-      : "Nothing in the indexed video looks like that. Try simpler words, "
-        + "or describe what is visible rather than what happened.";
+      : state.importing
+        ? "Nothing matching so far — the video is still being read, so try again in a moment."
+        : "Nothing in the video looks like that. Try simpler words, or describe "
+          + "what is visible rather than what happened.";
     return;
   }
 
@@ -212,7 +280,6 @@ function openPlayer(videoId, t, caption) {
   $("player-backdrop").hidden = false;
 
   const seek = () => {
-    // Start slightly before, so the moment is not already over.
     video.currentTime = Math.max(0, t - 2);
     video.play().catch(() => {});
   };
@@ -234,9 +301,9 @@ function closePlayer() {
 
 async function refreshLibrary() {
   const summary = await api("/api/summary");
-  state.ready = summary.n_videos > 0;
-  $("library").innerHTML = state.ready
-    ? `<b>${summary.n_videos}</b> video(s) &middot; <b>${fmtDuration(summary.duration)}</b> indexed`
+  state.indexed = summary.n_videos || 0;
+  $("library").innerHTML = state.indexed
+    ? `<b>${state.indexed}</b> video(s) &middot; <b>${fmtDuration(summary.duration)}</b> indexed`
     : "";
   return summary;
 }
@@ -258,6 +325,13 @@ async function boot() {
   $("q").onkeydown = (e) => {
     if (e.key === "Enter") runSearch();
   };
+  $("add").onclick = chooseFiles;
+  $("choose").onclick = chooseFiles;
+  $("filepick").onchange = (e) => {
+    importFiles(e.target.files);
+    e.target.value = "";           // let the same file be picked again
+  };
+
   $("player-close").onclick = closePlayer;
   $("player-backdrop").onclick = (e) => {
     if (e.target === $("player-backdrop")) closePlayer();
@@ -266,47 +340,46 @@ async function boot() {
     if (e.key === "Escape") closePlayer();
   });
 
-  // Choosing a file: the desktop window has a native dialog and real paths.
-  const pickNatively = async () => {
-    const paths = await window.pywebview.api.pick_videos();
-    if (paths && paths.length) {
-      show("stage-working");
-      for (const path of paths) await startImportFromPath(path);
-    }
-  };
-  const inDesktop = () => Boolean(window.pywebview && window.pywebview.api);
-
-  $("browse").onclick = () => (inDesktop() ? pickNatively() : $("filepick").click());
-  $("add-more").onclick = () => (inDesktop() ? pickNatively() : $("filepick").click());
-  $("filepick").onchange = (e) => startImportFromFiles(e.target.files);
+  // Dragging works in a browser. The desktop window has no drop support at
+  // all, so say so rather than appearing to ignore the file.
+  if (inDesktop()) {
+    $("or-drop").textContent = "";
+  }
 
   const zone = $("dropzone");
   for (const name of ["dragenter", "dragover"]) {
     document.addEventListener(name, (e) => {
       e.preventDefault();
-      zone.classList.add("over");
+      if (zone) zone.classList.add("over");
     });
   }
   for (const name of ["dragleave", "drop"]) {
     document.addEventListener(name, (e) => {
       e.preventDefault();
-      zone.classList.remove("over");
+      if (zone) zone.classList.remove("over");
     });
   }
-  document.addEventListener("drop", (e) => {
-    if (e.dataTransfer && e.dataTransfer.files.length) {
-      startImportFromFiles(e.dataTransfer.files);
+  document.addEventListener("drop", async (e) => {
+    e.preventDefault();
+    const files = e.dataTransfer ? e.dataTransfer.files : null;
+    const handled = await importFiles(files);
+    if (!handled) {
+      notice(
+        "This window cannot read dropped files. Use <b>Add video</b> to pick "
+        + "one instead — it opens a normal file chooser.",
+        "warn",
+      );
     }
   });
 
-  const summary = await refreshLibrary();
-  show(summary.n_videos ? "stage-ready" : "stage-empty");
+  await refreshLibrary();
+  refreshChrome();
 
-  // An import may already be running from a previous window.
   const running = (await api("/api/jobs")).find(
     (j) => j.status === "running" || j.status === "queued"
   );
   if (running) watchJob(running.id);
+  if (state.indexed) $("q").focus();
 }
 
 boot();

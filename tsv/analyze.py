@@ -47,6 +47,8 @@ class AnalyzeResult:
     n_detections: int = 0
     n_faces: int = 0
     n_embedded: int = 0
+    # Seconds of footage this pass examined, for driving a progress bar.
+    analysed_seconds: float = 0.0
     frames: int = 0
     elapsed: float = 0.0
     labels: Counter = field(default_factory=Counter)
@@ -270,6 +272,7 @@ def analyze_video(
     tracker_config: TrackerConfig | None = None,
     face: FacePipeline | None = None,
     clip: ClipEmbedder | None = None,
+    on_progress: Callable[[float, float], None] | None = None,
 ) -> AnalyzeResult:
     started = time.time()
     video = conn.execute("SELECT * FROM videos WHERE id = ?", (video_id,)).fetchone()
@@ -295,6 +298,12 @@ def analyze_video(
         )
 
     windows = [(float(s["t_start"]), float(s["t_end"])) for s in segments]
+    # Progress is measured in seconds of footage examined, not segments. A
+    # long recording often yields only two or three segments, and a bar that
+    # moves twice in four minutes is indistinguishable from a hung one.
+    window_seconds = [end - start for start, end in windows]
+    total_seconds = sum(window_seconds) or 1.0
+    seconds_before = [sum(window_seconds[:i]) for i in range(len(windows))]
     tracker = ByteTracker(tracker_config)
     sample_times: dict[int, float] = {}
     crops: dict[int, bytes] = {}
@@ -339,6 +348,12 @@ def analyze_video(
             if sample.window_index != current_window:
                 flush(current_window)
                 current_window = sample.window_index
+
+            if on_progress and frames % 8 == 0:
+                done = seconds_before[sample.window_index] + max(
+                    0.0, sample.t - windows[sample.window_index][0]
+                )
+                on_progress(min(done, total_seconds), total_seconds)
 
             frame_h, frame_w = sample.frame.shape[:2]
             if clip is not None:
@@ -385,6 +400,8 @@ def analyze_video(
                     )
 
         flush(current_window)
+        if on_progress:
+            on_progress(total_seconds, total_seconds)
     except Exception as exc:  # noqa: BLE001 - one bad file must not stop the run
         conn.rollback()
         return AnalyzeResult(video_id, path, "failed", note=f"{type(exc).__name__}: {exc}")
@@ -393,7 +410,7 @@ def analyze_video(
     return AnalyzeResult(
         video_id=video_id, path=path, status="analyzed",
         n_segments=len(segments), n_tracklets=n_tracklets, n_detections=n_detections,
-        n_faces=n_faces, n_embedded=n_embedded,
+        n_faces=n_faces, n_embedded=n_embedded, analysed_seconds=total_seconds,
         frames=frames, elapsed=time.time() - started, labels=labels,
     )
 
@@ -429,6 +446,7 @@ def analyze_all(
     with_faces: bool = True,
     clip: ClipEmbedder | None = None,
     with_clip: bool = True,
+    on_progress: Callable[[float, float], None] | None = None,
 ) -> AnalyzeSummary:
     classes = frozenset(cfg.detect.classes) if cfg.detect.classes else CCTV_CLASSES
     detector = detector or Detector(
@@ -457,7 +475,8 @@ def analyze_all(
 
     for row in rows:
         result = analyze_video(
-            conn, int(row["id"]), detector, cfg, force=force, face=face, clip=clip
+            conn, int(row["id"]), detector, cfg, force=force, face=face, clip=clip,
+            on_progress=on_progress,
         )
         summary.results.append(result)
         if on_result:
