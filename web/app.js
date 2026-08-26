@@ -262,15 +262,79 @@ function jumpToFraction(frac) {
 
 /* ---------- search ---------- */
 
+function renderAnswer(body) {
+  const panel = $("answer");
+  const answer = body.answer;
+
+  if (!answer) {
+    // Clear as well as hide: a stale headline flashing on the next question
+    // would read as an answer to it.
+    panel.hidden = true;
+    $("answer-headline").textContent = "";
+    $("answer-understood").innerHTML = "";
+    $("answer-rows").innerHTML = "";
+    $("answer-caveat").hidden = true;
+    return;
+  }
+  panel.hidden = false;
+  $("answer-headline").textContent = answer.headline;
+
+  const u = body.understood;
+  const chips = u.matched.map((m) => `<span class="chip">${m.kind}: <b>${m.value}</b></span>`);
+  if (u.semantic_text) {
+    chips.push(`<span class="chip">also looking for: <b>${u.semantic_text}</b></span>`);
+  }
+  $("answer-understood").innerHTML = chips.join("");
+
+  $("answer-rows").innerHTML = answer.rows
+    .map((r) => {
+      const when = new Date(r.ts * 1000).toLocaleString();
+      const who = r.who || r.label;
+      const detail = [
+        r.kind ? r.kind.replace("_", " ") : "",
+        r.zone ? `at ${r.zone}` : "",
+        r.duration ? `for ${Math.round(r.duration)}s` : "",
+      ].filter(Boolean).join(" ");
+      return `<div class="answer-row" data-video="${r.video_id}" data-t="${r.t}">
+        <span>${when}</span><span class="who">${who}</span>
+        <span class="detail">${detail}</span>
+      </div>`;
+    })
+    .join("");
+
+  $("answer-rows").querySelectorAll(".answer-row").forEach((el) => {
+    el.onclick = () => playAt(Number(el.dataset.video), Number(el.dataset.t));
+  });
+
+  const caveat = $("answer-caveat");
+  caveat.hidden = !body.caveat;
+  caveat.textContent = body.caveat || "";
+}
+
+function playAt(videoId, t) {
+  const video = $("video");
+  const seek = () => {
+    video.currentTime = Math.max(0, t - 2);
+    video.play().catch(() => {});
+  };
+  if (video.dataset.videoId !== String(videoId)) {
+    video.dataset.videoId = String(videoId);
+    video.src = `/api/media/${videoId}`;
+    video.addEventListener("loadedmetadata", seek, { once: true });
+  } else {
+    seek();
+  }
+}
+
 async function runSearch() {
   const text = $("q").value.trim();
   if (!text) return clearSearch();
 
   const query = new URLSearchParams({ q: text, limit: "60" });
-  if (state.cameraId) query.set("camera_id", state.cameraId);
 
-  $("search-note").textContent = "searching\u2026";
-  const body = await api(`/api/search?${query}`);
+  $("search-note").textContent = "thinking\u2026";
+  const body = await api(`/api/ask?${query}`);
+  renderAnswer(body);
 
   // Reshape hits into the segment shape the filmstrip already renders.
   state.results = body.results.map((r) => ({
@@ -292,9 +356,14 @@ async function runSearch() {
   state.selected = null;
   $("objects").innerHTML = "";
   $("search-clear").hidden = false;
-  $("search-note").textContent = body.semantic
-    ? `${body.n} result${body.n === 1 ? "" : "s"}`
-    : `${body.n} result${body.n === 1 ? "" : "s"} \u2014 word matching only, no CLIP models`;
+  const n = body.results.length;
+  if (body.mode === "answer") {
+    $("search-note").textContent = "answered from the index";
+  } else if (n) {
+    $("search-note").textContent = `${n} closest match${n === 1 ? "" : "es"}`;
+  } else {
+    $("search-note").textContent = "nothing matched";
+  }
 
   renderFilmstrip();
   drawTimeline();
@@ -304,6 +373,7 @@ function clearSearch() {
   state.results = null;
   $("q").value = "";
   $("search-clear").hidden = true;
+  $("answer").hidden = true;
   $("search-note").textContent = "";
   renderFilmstrip();
   drawTimeline();
@@ -345,6 +415,7 @@ async function loadDay() {
   state.selected = null;
   state.results = null;
   $("search-clear").hidden = true;
+  $("answer").hidden = true;
   $("objects").innerHTML = "";
   await loadLabels();
   renderFilmstrip();

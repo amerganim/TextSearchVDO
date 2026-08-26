@@ -13,11 +13,18 @@
   </header>
 
   <section class="searchbar">
-    <input id="q" type="search" placeholder="Search: a person carrying a box, a dog, someone at the front door&hellip;"
+    <input id="q" type="search" placeholder="Ask: when did Rafi go out the front door yesterday&hellip;"
            autocomplete="off" spellcheck="false">
-    <button type="button" id="search-go">Search</button>
+    <button type="button" id="search-go">Ask</button>
     <button type="button" class="ghost" id="search-clear" hidden>Clear</button>
     <span class="search-note" id="search-note"></span>
+  </section>
+
+  <section class="answer" id="answer" hidden>
+    <div class="headline" id="answer-headline"></div>
+    <div class="understood" id="answer-understood"></div>
+    <div class="answer-rows" id="answer-rows"></div>
+    <div class="caveat" id="answer-caveat" hidden></div>
   </section>
 
   <section class="controls">

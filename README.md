@@ -25,6 +25,10 @@ door* is now a query.
 crops, a word index over everything the earlier phases learned, and structured
 filters, fused into one ranked answer.
 
+**Phase 4 (in progress):** answers, not just results. *When did Rafi go out
+the front door yesterday* returns two timestamps and the clips to play, rather
+than forty segments to scroll. Captioning and audio are not built yet.
+
 ## Architecture
 
 The design is **index → retrieve → verify**, not summarise-then-search. A
@@ -41,7 +45,8 @@ Stage 0  Motion segmentation                        <- done
 Stage 1  Detection + tracking (YOLO / ByteTrack)    <- done
 Stage 2  Identity (face) and user-drawn zones       <- done
 Stage 3  CLIP embeddings + hybrid retrieval         <- done
-Stage 4  VLM captions, audio ASR, LLM answers
+Stage 4  Question answering                         <- done
+         VLM captions, audio ASR                    <- not started
 ```
 
 Stage 0 itself is two tiers:
@@ -218,6 +223,44 @@ Absolute CLIP scores are not calibrated, so there is no default similarity
 floor - `--min-similarity` exists and the score is always shown, so a useful
 floor can be picked by looking at real numbers rather than guessed here.
 
+## Stage 4: asking questions
+
+Search ranks moments; this answers questions.
+
+The parser is **entity grounded, not general language understanding**, and
+that is what lets it work without a model. The vocabulary is closed and
+already in the database: the people who were enrolled, the zones that were
+drawn, the object classes the detector knows, the cameras that exist. Matching
+against that is reliable in a way that parsing arbitrary English is not.
+
+Whatever is left after the known entities are lifted out is not discarded — it
+becomes the CLIP query, which handles the open-vocabulary half ("in a red
+jacket"). So everything the index knows *exactly* is answered exactly, and
+only the genuinely fuzzy remainder is left to a similarity score.
+
+```bash
+python -m tsv ask "when did Rafi go out the front door yesterday"
+```
+
+```
+  understood: identity=Rafi, zone=front door, event=go out
+
+  2 times, from Wed 01 Apr, 09:00:07 to 09:00:19.
+    Wed 01 Apr 09:00:07  Rafi (cross out) at front door
+    Wed 01 Apr 09:00:19  Rafi (cross out) at front door
+```
+
+It understands *when / who / how many / how long / did*, relative days
+("yesterday", "last night", "on wednesday"), times of day, directions through
+a zone, object classes, and people.
+
+**A question about someone it has never heard of is refused, not answered.**
+This is the one failure that would make the feature untrustworthy: ask about
+someone who was never enrolled and the zone and direction still match, so a
+naive implementation hands back *somebody else's* movements with a confident
+timestamp. Instead it says who it does know, and offers ranked matches
+separately.
+
 ## Usage
 
 ```bash
@@ -238,6 +281,10 @@ python -m tsv people name --tracklet 1 --name "Rafi" && python -m tsv people ass
 
 ```bash
 python -m tsv search "someone at the front door" --reindex
+```
+
+```bash
+python -m tsv ask "how many times did Rafi go out yesterday"
 ```
 
 ```bash
@@ -360,7 +407,10 @@ tune, in roughly this order:
    in testing a matching query scored 0.22–0.27 and an unrelated one 0.15, but
    that gap moves with the camera and with how the query is phrased. Pick
    `--min-similarity` from real numbers.
-8. **Detection thresholds and sample rate.** `DetectConfig.detect_fps` trades
+8. **Question phrasing.** The parser knows a fixed list of ways to say "went
+   out" and "came in". It covers the obvious ones, but it is a list, not an
+   understanding of English — expect to add phrasings that real use throws up.
+9. **Detection thresholds and sample rate.** `DetectConfig.detect_fps` trades
    cost against tracking stability linearly, and `decode_width` decides whether
    distant figures survive at all. Both want real footage to settle.
 
@@ -389,6 +439,7 @@ tsv/identity.py          gallery, matching, enrolment
 tsv/models/clip.py       CLIP image/text encoders
 tsv/models/tokenizer.py  CLIP byte-level BPE, pure Python
 tsv/search.py            filters, lexical, semantic, rank fusion
+tsv/query.py             question parsing and answering
 tsv/api.py               FastAPI: timeline, segments, objects, ranged media
 tsv/config.py            every tunable, grouped by stage
 web/                     timeline UI

@@ -325,6 +325,56 @@ def cmd_search(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ask(args: argparse.Namespace) -> int:
+    from datetime import datetime as _dt
+
+    from tsv.models.clip import build_clip
+    from tsv.query import ask
+
+    cfg = _config(args)
+    conn = db.open_db(cfg.db_path)
+
+    embed = None
+    if not args.no_semantic:
+        clip = build_clip(
+            cfg.model_dir, cfg.clip.image_file, cfg.clip.text_file,
+            crop_mode=cfg.clip.crop_mode, force_backend=cfg.clip.force_backend,
+        )
+        if clip is not None:
+            embed = clip.embed_text
+
+    result = ask(conn, args.question, embed_text=embed, limit=args.limit)
+    plan = result.plan
+
+    understood = ", ".join(f"{kind}={value}" for kind, value in plan.matched)
+    print(f"  understood: {understood or 'nothing specific'}"
+          f"{'  + ' + repr(plan.semantic_text) if plan.semantic_text else ''}")
+    print()
+
+    if result.answer is not None:
+        print(f"  {result.answer.headline}")
+        for row in result.answer.rows:
+            when = _dt.fromtimestamp(row.ts).strftime("%a %d %b %H:%M:%S")
+            who = row.who or row.label
+            where = f" at {row.zone}" if row.zone else ""
+            what = f" ({row.kind.replace('_', ' ')})" if row.kind else ""
+            extra = f" for {row.duration:.0f}s" if row.duration else ""
+            print(f"    {when}  {who}{what}{where}{extra}")
+        if result.caveat:
+            print(f"\n  note: {result.caveat}")
+
+    if result.hits and (result.answer is None or not result.answer.found):
+        print(f"  closest matches ({len(result.hits)}):")
+        for hit in result.hits[: args.limit]:
+            when = _dt.fromtimestamp(hit.ts_start).strftime("%a %d %b %H:%M:%S")
+            sim = f"{hit.semantic_score:+.3f}" if hit.semantic_score is not None else "  -   "
+            print(f"    {when}  sim={sim}  [{'+'.join(hit.sources)}]")
+
+    if result.mode == "empty":
+        print("  nothing matched.")
+    return 0
+
+
 def cmd_stats(args: argparse.Namespace) -> int:
     cfg = _config(args)
     conn = db.open_db(cfg.db_path)
@@ -467,6 +517,12 @@ def main(argv: list[str] | None = None) -> int:
     p_search.add_argument("--no-semantic", action="store_true",
                           help="word matching only, no CLIP")
     p_search.set_defaults(func=cmd_search)
+
+    p_ask = sub.add_parser("ask", help="ask a question in plain language")
+    p_ask.add_argument("question")
+    p_ask.add_argument("--limit", type=int, default=20)
+    p_ask.add_argument("--no-semantic", action="store_true")
+    p_ask.set_defaults(func=cmd_ask)
 
     p_stats = sub.add_parser("stats", help="what is in the index")
     p_stats.set_defaults(func=cmd_stats)

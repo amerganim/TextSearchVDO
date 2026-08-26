@@ -23,6 +23,7 @@ from tsv.identity import (
     assign_identities, delete_identity, enroll_tracklet, list_identities,
 )
 from tsv.models.clip import build_clip
+from tsv.query import ask as run_ask
 from tsv.search import SearchFilters, rebuild_text_index, search as run_search
 
 
@@ -364,6 +365,58 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
                 for h in hits
             ],
         }
+
+    @app.get("/api/ask")
+    def ask_endpoint(q: str, limit: int = Query(20, le=200)) -> dict:
+        """Answer a typed question, falling back to ranked search."""
+        result = run_ask(conn, q, embed_text=_query_vector, limit=limit)
+        plan = result.plan
+
+        body: dict = {
+            "question": q,
+            "mode": result.mode,
+            "caveat": result.caveat,
+            "understood": {
+                "intent": plan.intent,
+                "matched": [{"kind": k, "value": v} for k, v in plan.matched],
+                "semantic_text": plan.semantic_text,
+                "day": plan.filters.day,
+                "identity": plan.filters.identity,
+                "zone": plan.filters.zone,
+                "label": plan.filters.label,
+                "event_kind": plan.filters.event_kind,
+            },
+            "answer": None,
+            "results": [],
+        }
+
+        if result.answer is not None:
+            body["answer"] = {
+                "headline": result.answer.headline,
+                "found": result.answer.found,
+                "rows": [
+                    {
+                        "ts": r.ts, "t": r.t, "label": r.label, "who": r.who,
+                        "zone": r.zone, "kind": r.kind, "duration": r.duration,
+                        "video_id": r.video_id, "segment_id": r.segment_id,
+                    }
+                    for r in result.answer.rows
+                ],
+            }
+
+        body["results"] = [
+            {
+                "segment_id": h.segment_id, "score": h.score,
+                "ts_start": h.ts_start, "ts_end": h.ts_end,
+                "video_id": h.video_id, "camera_id": h.camera_id,
+                "t_start": h.t_start, "t_end": h.t_end,
+                "labels": h.labels, "sources": h.sources,
+                "semantic_score": h.semantic_score,
+                "tracklet_id": h.best_tracklet_id,
+            }
+            for h in result.hits
+        ]
+        return body
 
     @app.post("/api/search/reindex")
     def reindex() -> dict:

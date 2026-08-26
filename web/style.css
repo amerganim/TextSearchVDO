@@ -373,3 +373,64 @@ input[type="text"]:focus, select:focus { outline: 2px solid var(--accent); outli
 }
 
 .card .why b { color: var(--accent); font-weight: 600; }
+
+
+/* ---------- answers ---------- */
+
+.answer {
+  margin: 12px 20px 0;
+  padding: 14px 16px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+}
+
+.answer .headline { font-size: 16px; line-height: 1.4; }
+
+.answer .understood {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.answer .chip {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 3px;
+  background: #222c3a;
+  color: #9fb2cc;
+}
+
+.answer .chip b { color: var(--text); font-weight: 600; }
+
+.answer-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 10px;
+}
+
+.answer-row {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 13px;
+  padding: 4px 8px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+
+.answer-row:hover { border-color: var(--accent); }
+.answer-row .who { color: var(--text); font-weight: 600; }
+.answer-row .detail { color: var(--muted); }
+
+.answer .caveat {
+  margin-top: 10px;
+  font-size: 12px;
+  color: #d8a657;
+}
