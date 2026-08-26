@@ -130,7 +130,10 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
         path = WEB_DIR / name
         if not path.is_file():
             raise HTTPException(404)
-        return FileResponse(path)
+        # Never cached. These are served from localhost, so there is nothing to
+        # save, and a stale stylesheet after an update is a real bug that looks
+        # like a broken app rather than a caching artefact.
+        return FileResponse(path, headers={"Cache-Control": "no-store"})
 
     @app.get("/api/summary")
     def summary() -> dict:

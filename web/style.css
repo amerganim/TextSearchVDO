@@ -12,6 +12,14 @@
 
 * { box-sizing: border-box; }
 
+/* The hidden attribute must beat any display rule below it. An element with
+   display:flex or :grid ignores [hidden] entirely, because the UA rule that
+   implements it is weaker than any author declaration - and a fixed,
+   full-screen overlay that ignores it sits above the whole app swallowing
+   every click. */
+[hidden] { display: none !important; }
+
+
 body {
   margin: 0;
   background: var(--bg);

@@ -477,3 +477,17 @@ def test_concurrent_thumbnail_requests(zone_client):
         codes = list(pool.map(lambda i: zone_client.get(f"/api/thumb/{i}").status_code, ids))
     assert set(codes) <= {200, 404}
     assert 500 not in codes
+
+
+def test_static_assets_are_not_cached(zone_client):
+    """A stale stylesheet after an update looks like a broken app, and there is
+    nothing to save by caching over localhost."""
+    response = zone_client.get("/static/simple.css")
+    assert response.status_code == 200
+    assert "no-store" in response.headers.get("cache-control", "")
+
+
+def test_the_simple_app_is_served_at_the_root(zone_client):
+    body = zone_client.get("/").text
+    assert "Add a video to get started" in body or 'id="q"' in body
+    assert zone_client.get("/advanced").status_code == 200
