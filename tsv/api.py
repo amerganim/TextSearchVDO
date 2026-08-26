@@ -11,11 +11,21 @@ import sqlite3
 from datetime import date, datetime, time as dtime, timedelta
 from pathlib import Path
 
+import cv2
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
+from pydantic import BaseModel, Field
 
 from tsv import db
 from tsv.config import DEFAULT, Config
+from tsv.events import create_zone, delete_zone, list_zones, recompute_events
+
+
+class ZoneIn(BaseModel):
+    camera_id: int
+    name: str = Field(min_length=1, max_length=64)
+    kind: str = Field(pattern="^(region|line)$")
+    points: list[tuple[float, float]] = Field(min_length=2, max_length=64)
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 
@@ -270,6 +280,122 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
             [*params, limit, offset],
         ).fetchall()
         return [dict(r) for r in rows]
+
+    @app.get("/api/zones")
+    def zones(camera_id: int | None = None) -> list[dict]:
+        return [
+            {"id": z.id, "camera_id": z.camera_id, "name": z.name,
+             "kind": z.kind, "points": z.points}
+            for z in list_zones(conn, camera_id)
+        ]
+
+    @app.post("/api/zones")
+    def add_zone(zone: ZoneIn) -> dict:
+        try:
+            made = create_zone(conn, zone.camera_id, zone.name, zone.kind, zone.points)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
+        except sqlite3.IntegrityError:
+            raise HTTPException(409, f"a zone named {zone.name!r} already exists") from None
+        # Events for the new zone are available immediately; this costs no
+        # video decoding, only the boxes already in the index.
+        summary = recompute_events(conn, made.camera_id)
+        return {
+            "id": made.id, "camera_id": made.camera_id, "name": made.name,
+            "kind": made.kind, "points": made.points, "n_events": summary.n_events,
+        }
+
+    @app.delete("/api/zones/{zone_id}")
+    def remove_zone(zone_id: int) -> dict:
+        if not delete_zone(conn, zone_id):
+            raise HTTPException(404)
+        return {"deleted": zone_id}
+
+    @app.post("/api/zones/recompute")
+    def recompute(camera_id: int | None = None) -> dict:
+        summary = recompute_events(conn, camera_id)
+        return {
+            "n_zones": summary.n_zones,
+            "n_tracklets": summary.n_tracklets,
+            "n_events": summary.n_events,
+            "by_kind": summary.by_kind,
+            "elapsed": summary.elapsed,
+        }
+
+    @app.get("/api/events")
+    def events(
+        day: str | None = None,
+        zone_id: int | None = None,
+        kind: str | None = None,
+        label: str | None = None,
+        camera_id: int | None = None,
+        limit: int = Query(300, le=2000),
+        offset: int = 0,
+    ) -> list[dict]:
+        clauses: list[str] = []
+        params: list = []
+        for column, value in (
+            ("e.zone_id", zone_id), ("e.kind", kind),
+            ("e.label", label), ("e.camera_id", camera_id),
+        ):
+            if value is not None:
+                clauses.append(f"AND {column} = ?")
+                params.append(value)
+        if day:
+            try:
+                start, end = _day_bounds(date.fromisoformat(day))
+            except ValueError:
+                raise HTTPException(400, "day must be YYYY-MM-DD") from None
+            clauses.append("AND e.ts >= ? AND e.ts < ?")
+            params += [start, end]
+
+        rows = conn.execute(
+            f"""SELECT e.*, z.name AS zone_name, t.thumb_path IS NOT NULL AS has_crop,
+                       s.t_start AS segment_start
+                FROM events e
+                JOIN zones z ON z.id = e.zone_id
+                JOIN tracklets t ON t.id = e.tracklet_id
+                JOIN segments s ON s.id = e.segment_id
+                WHERE 1=1 {" ".join(clauses)}
+                ORDER BY e.ts LIMIT ? OFFSET ?""",
+            [*params, limit, offset],
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    @app.get("/api/frame/{camera_id}")
+    def frame(camera_id: int, width: int = Query(960, le=1920)) -> Response:
+        """A representative still from a camera, to draw zones on.
+
+        The busiest segment's peak moment: a frame with something in it makes
+        the scene easier to read than an empty corridor would.
+        """
+        row = conn.execute(
+            """SELECT v.path, s.peak_offset
+               FROM segments s JOIN videos v ON v.id = s.video_id
+               WHERE s.camera_id = ?
+               ORDER BY s.activity_score DESC LIMIT 1""",
+            (camera_id,),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(404, "no indexed footage for this camera")
+
+        path = Path(row["path"])
+        if not path.is_file():
+            raise HTTPException(410, "source file has moved or been deleted")
+
+        from tsv.frames import sample_windows
+
+        offset = float(row["peak_offset"])
+        for sample in sample_windows(
+            path, [(offset, offset + 1.0)], fps=1.0, width=width, pixel_format="rgb24"
+        ):
+            ok, encoded = cv2.imencode(
+                ".jpg", cv2.cvtColor(sample.frame, cv2.COLOR_RGB2BGR),
+                [cv2.IMWRITE_JPEG_QUALITY, 85],
+            )
+            if ok:
+                return Response(encoded.tobytes(), media_type="image/jpeg")
+        raise HTTPException(500, "could not decode a frame")
 
     @app.get("/api/crop/{tracklet_id}")
     def crop(tracklet_id: int) -> FileResponse:

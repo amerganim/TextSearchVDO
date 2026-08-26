@@ -137,6 +137,96 @@ def cmd_bench(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_zones(args: argparse.Namespace) -> int:
+    """List, add or remove zones, and rebuild the events they imply."""
+    import json as _json
+
+    from tsv.events import create_zone, delete_zone, list_zones, recompute_events
+
+    cfg = _config(args)
+    conn = db.open_db(cfg.db_path)
+
+    if args.zone_command == "add":
+        camera = conn.execute(
+            "SELECT id FROM cameras WHERE name = ?", (args.camera,)
+        ).fetchone()
+        if camera is None:
+            print(f"no camera named {args.camera!r}")
+            return 1
+        try:
+            points = [tuple(float(v) for v in pair.split(",")) for pair in args.points]
+            zone = create_zone(conn, int(camera["id"]), args.name, args.kind, points)
+        except ValueError as exc:
+            print(f"bad zone: {exc}")
+            return 1
+        summary = recompute_events(conn, zone.camera_id)
+        print(f"added {zone.kind} {zone.name!r} on {args.camera}")
+        print(f"{summary.n_events} events across {summary.n_tracklets} tracklets")
+        return 0
+
+    if args.zone_command == "remove":
+        print("removed" if delete_zone(conn, args.id) else f"no zone with id {args.id}")
+        return 0
+
+    if args.zone_command == "recompute":
+        summary = recompute_events(conn)
+        kinds = ", ".join(f"{n} {k}" for k, n in sorted(summary.by_kind.items()))
+        print(f"{summary.n_zones} zones over {summary.n_tracklets} tracklets "
+              f"-> {summary.n_events} events ({kinds or 'none'}) in {summary.elapsed:.2f}s")
+        return 0
+
+    zones = list_zones(conn)
+    if not zones:
+        print("no zones defined. Add one with:")
+        print("  python -m tsv zones add --camera ch01 --name 'front door' \\")
+        print("      --kind line --points 0.2,0.8 0.8,0.8")
+        return 0
+    for zone in zones:
+        camera = conn.execute(
+            "SELECT name FROM cameras WHERE id = ?", (zone.camera_id,)
+        ).fetchone()["name"]
+        n = conn.execute(
+            "SELECT COUNT(*) c FROM events WHERE zone_id = ?", (zone.id,)
+        ).fetchone()["c"]
+        print(f"  [{zone.id}] {camera:<10} {zone.kind:<7} {zone.name:<20} "
+              f"{n:>5} events  {_json.dumps(zone.points)}")
+    return 0
+
+
+def cmd_events(args: argparse.Namespace) -> int:
+    from datetime import datetime as _dt
+
+    cfg = _config(args)
+    conn = db.open_db(cfg.db_path)
+    clauses, params = [], []
+    if args.zone:
+        clauses.append("AND z.name = ?")
+        params.append(args.zone)
+    if args.kind:
+        clauses.append("AND e.kind = ?")
+        params.append(args.kind)
+    if args.label:
+        clauses.append("AND e.label = ?")
+        params.append(args.label)
+
+    rows = conn.execute(
+        f"""SELECT e.ts, e.kind, e.label, e.duration, z.name AS zone
+            FROM events e JOIN zones z ON z.id = e.zone_id
+            WHERE 1=1 {" ".join(clauses)}
+            ORDER BY e.ts LIMIT ?""",
+        [*params, args.limit],
+    ).fetchall()
+
+    if not rows:
+        print("no matching events.")
+        return 0
+    for r in rows:
+        when = _dt.fromtimestamp(r["ts"]).strftime("%Y-%m-%d %H:%M:%S")
+        extra = f" for {r['duration']:.0f}s" if r["duration"] else ""
+        print(f"  {when}  {r['label']:<8} {r['kind']:<10} {r['zone']}{extra}")
+    return 0
+
+
 def cmd_stats(args: argparse.Namespace) -> int:
     cfg = _config(args)
     conn = db.open_db(cfg.db_path)
@@ -201,6 +291,32 @@ def main(argv: list[str] | None = None) -> int:
     p_bench = sub.add_parser("bench", help="time the detector on each available backend")
     p_bench.add_argument("--runs", type=int, default=20)
     p_bench.set_defaults(func=cmd_bench)
+
+    p_zones = sub.add_parser("zones", help="manage zones and rebuild their events")
+    p_zones.set_defaults(func=cmd_zones, zone_command="list")
+    zone_sub = p_zones.add_subparsers(dest="zone_command")
+
+    z_add = zone_sub.add_parser("add", help="add a zone")
+    z_add.add_argument("--camera", required=True)
+    z_add.add_argument("--name", required=True)
+    z_add.add_argument("--kind", choices=["region", "line"], required=True)
+    z_add.add_argument("--points", nargs="+", required=True,
+                       metavar="X,Y", help="normalised 0..1, e.g. 0.2,0.8 0.8,0.8")
+    z_add.set_defaults(func=cmd_zones)
+
+    z_rm = zone_sub.add_parser("remove", help="remove a zone by id")
+    z_rm.add_argument("id", type=int)
+    z_rm.set_defaults(func=cmd_zones)
+
+    z_re = zone_sub.add_parser("recompute", help="rebuild every event from stored tracklets")
+    z_re.set_defaults(func=cmd_zones)
+
+    p_events = sub.add_parser("events", help="list zone events")
+    p_events.add_argument("--zone")
+    p_events.add_argument("--kind")
+    p_events.add_argument("--label")
+    p_events.add_argument("--limit", type=int, default=50)
+    p_events.set_defaults(func=cmd_events)
 
     p_stats = sub.add_parser("stats", help="what is in the index")
     p_stats.set_defaults(func=cmd_stats)

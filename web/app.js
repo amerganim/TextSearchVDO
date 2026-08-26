@@ -322,6 +322,9 @@ async function boot() {
   $("camera").onchange = async (e) => {
     state.cameraId = e.target.value;
     await loadDays();
+    if (typeof refreshZonePanel === "function" && zoneState.open) {
+      await refreshZonePanel(state.cameraId);
+    }
   };
   $("day").onchange = async (e) => {
     state.day = e.target.value;
@@ -341,6 +344,8 @@ async function boot() {
   // Covers window resizes, the sidebar collapsing, and the first time the
   // canvas gets a non-zero box after being laid out hidden.
   new ResizeObserver(drawTimeline).observe($("timeline"));
+
+  if (typeof initZones === "function") initZones(() => state.cameraId);
 
   await loadDays();
 }

@@ -161,3 +161,124 @@ def test_tracklet_crops_are_served(analyzed_client: TestClient):
 
 def test_missing_crop_returns_404(analyzed_client: TestClient):
     assert analyzed_client.get("/api/crop/999999").status_code == 404
+
+
+# ---------- Phase 2: zones ----------
+
+
+@pytest.fixture
+def zone_client(day_clip, tmp_path) -> TestClient:
+    """A fresh analysed index per test, since zone tests mutate it."""
+    from tsv.analyze import analyze_all
+    from tests.test_analyze import BrightBoxDetector
+
+    cfg = dataclasses.replace(
+        DEFAULT,
+        data_dir=tmp_path,
+        detect=dataclasses.replace(DEFAULT.detect, detect_fps=6.0, decode_width=320),
+    )
+    conn = db.open_db(cfg.db_path)
+    ingest_file(conn, Path(day_clip["path"]), cfg)
+    analyze_all(conn, cfg, detector=BrightBoxDetector())
+    conn.close()
+    return TestClient(create_app(cfg))
+
+
+def _camera_id(client: TestClient) -> int:
+    return client.get("/api/cameras").json()[0]["id"]
+
+
+def _add_line(client: TestClient, name="middle"):
+    return client.post("/api/zones", json={
+        "camera_id": _camera_id(client), "name": name, "kind": "line",
+        "points": [[0.5, 0.0], [0.5, 1.0]],
+    })
+
+
+def test_creating_a_zone_returns_it_with_events_already_computed(zone_client):
+    response = _add_line(zone_client)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["name"] == "middle"
+    assert body["kind"] == "line"
+    # Events are available immediately - no video decoding is involved.
+    assert body["n_events"] > 0
+
+
+def test_zones_are_listed_and_filtered_by_camera(zone_client):
+    _add_line(zone_client)
+    assert len(zone_client.get("/api/zones").json()) == 1
+    camera_id = _camera_id(zone_client)
+    assert len(zone_client.get(f"/api/zones?camera_id={camera_id}").json()) == 1
+    assert zone_client.get("/api/zones?camera_id=9999").json() == []
+
+
+def test_a_malformed_zone_is_rejected(zone_client):
+    bad = zone_client.post("/api/zones", json={
+        "camera_id": _camera_id(zone_client), "name": "bad", "kind": "line",
+        "points": [[0.1, 0.1], [0.5, 0.5], [0.9, 0.9]],
+    })
+    assert bad.status_code == 400
+
+    off_frame = zone_client.post("/api/zones", json={
+        "camera_id": _camera_id(zone_client), "name": "off", "kind": "line",
+        "points": [[0.1, 0.1], [4.0, 0.5]],
+    })
+    assert off_frame.status_code == 400
+
+    wrong_kind = zone_client.post("/api/zones", json={
+        "camera_id": _camera_id(zone_client), "name": "x", "kind": "triangle",
+        "points": [[0.1, 0.1], [0.5, 0.5]],
+    })
+    assert wrong_kind.status_code == 422
+
+
+def test_duplicate_zone_names_on_one_camera_conflict(zone_client):
+    assert _add_line(zone_client).status_code == 200
+    assert _add_line(zone_client).status_code == 409
+
+
+def test_events_are_listed_and_filterable(zone_client):
+    _add_line(zone_client)
+    events = zone_client.get("/api/events").json()
+    assert events
+    assert {"zone_name", "kind", "ts", "label"} <= set(events[0])
+    assert [e["ts"] for e in events] == sorted(e["ts"] for e in events)
+
+    assert zone_client.get("/api/events?kind=cross_out").json()
+    assert zone_client.get("/api/events?kind=nonsense").json() == []
+    assert zone_client.get("/api/events?label=person").json()
+    assert zone_client.get("/api/events?label=giraffe").json() == []
+
+
+def test_events_reject_a_malformed_day(zone_client):
+    assert zone_client.get("/api/events?day=nonsense").status_code == 400
+
+
+def test_deleting_a_zone_removes_its_events(zone_client):
+    zone_id = _add_line(zone_client).json()["id"]
+    assert zone_client.get("/api/events").json()
+
+    assert zone_client.delete(f"/api/zones/{zone_id}").status_code == 200
+    assert zone_client.get("/api/events").json() == []
+    assert zone_client.delete(f"/api/zones/{zone_id}").status_code == 404
+
+
+def test_recompute_is_reported(zone_client):
+    _add_line(zone_client)
+    body = zone_client.post("/api/zones/recompute").json()
+    assert body["n_zones"] == 1
+    assert body["n_events"] > 0
+    assert "cross_out" in body["by_kind"]
+
+
+def test_a_still_frame_is_served_for_drawing_on(zone_client):
+    camera_id = _camera_id(zone_client)
+    response = zone_client.get(f"/api/frame/{camera_id}")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/jpeg"
+    assert response.content[:2] == b"\xff\xd8"
+
+
+def test_a_frame_for_an_unknown_camera_is_404(zone_client):
+    assert zone_client.get("/api/frame/9999").status_code == 404

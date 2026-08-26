@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_info (
@@ -95,7 +95,42 @@ CREATE TABLE IF NOT EXISTS detections (
     score       REAL NOT NULL
 );
 
+-- Phase 2. Zones are drawn once by the user, in normalised coordinates so
+-- they survive the camera being reconfigured to a different resolution.
+CREATE TABLE IF NOT EXISTS zones (
+    id          INTEGER PRIMARY KEY,
+    camera_id   INTEGER NOT NULL REFERENCES cameras(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    kind        TEXT NOT NULL CHECK (kind IN ('region', 'line')),
+    -- JSON [[x, y], ...]; a line has exactly two points, a region at least 3.
+    points      TEXT NOT NULL,
+    created_at  REAL,
+    UNIQUE (camera_id, name)
+);
+
+-- What a tracklet did against a zone. Derived from the stored detections
+-- rather than during analysis: zones get edited, and recomputing must not
+-- require re-running the detector or touching the video again.
+CREATE TABLE IF NOT EXISTS events (
+    id          INTEGER PRIMARY KEY,
+    tracklet_id INTEGER NOT NULL REFERENCES tracklets(id) ON DELETE CASCADE,
+    zone_id     INTEGER NOT NULL REFERENCES zones(id) ON DELETE CASCADE,
+    segment_id  INTEGER NOT NULL,
+    video_id    INTEGER NOT NULL,
+    camera_id   INTEGER NOT NULL,
+    label       TEXT NOT NULL,
+    kind        TEXT NOT NULL,
+    t           REAL NOT NULL,
+    ts          REAL NOT NULL,
+    duration    REAL NOT NULL DEFAULT 0
+);
+
 CREATE INDEX IF NOT EXISTS idx_segments_ts ON segments(ts_start, ts_end);
+CREATE INDEX IF NOT EXISTS idx_zones_camera ON zones(camera_id);
+CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
+CREATE INDEX IF NOT EXISTS idx_events_zone ON events(zone_id, ts);
+CREATE INDEX IF NOT EXISTS idx_events_kind ON events(kind, ts);
+CREATE INDEX IF NOT EXISTS idx_events_tracklet ON events(tracklet_id);
 CREATE INDEX IF NOT EXISTS idx_tracklets_segment ON tracklets(segment_id);
 CREATE INDEX IF NOT EXISTS idx_tracklets_ts ON tracklets(ts_start, ts_end);
 CREATE INDEX IF NOT EXISTS idx_tracklets_label ON tracklets(label, ts_start);

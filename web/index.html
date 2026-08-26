@@ -22,10 +22,54 @@
     <label>Showing
       <select id="label"><option value="">Everything</option></select>
     </label>
+    <button type="button" class="ghost" id="zones-toggle" aria-expanded="false">Zones</button>
     <div class="legend">
       <span><i class="swatch recorded"></i>recorded</span>
       <span><i class="swatch active"></i>activity</span>
       <span><i class="swatch gap"></i>no recording</span>
+    </div>
+  </section>
+
+  <section class="zones-panel" id="zones-panel" hidden>
+    <div class="zone-editor">
+      <div class="zone-stage" id="zone-stage">
+        <img id="zone-frame" alt="Camera view">
+        <canvas id="zone-canvas"></canvas>
+        <div class="zone-hint" id="zone-hint">Pick a camera to draw on.</div>
+      </div>
+
+      <aside class="zone-side">
+        <h2>Draw a zone</h2>
+        <p class="note">
+          A <b>line</b> counts crossings and their direction &mdash; a doorway.
+          A <b>region</b> counts entries and how long someone stayed &mdash; a room.
+        </p>
+
+        <div class="field">
+          <label for="zone-kind">Type</label>
+          <select id="zone-kind">
+            <option value="line">Line (2 points)</option>
+            <option value="region">Region (3+ points)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="zone-name">Name</label>
+          <input id="zone-name" type="text" placeholder="front door" maxlength="64">
+        </div>
+
+        <div class="zone-actions">
+          <button type="button" id="zone-save" disabled>Save zone</button>
+          <button type="button" class="ghost" id="zone-undo" disabled>Undo point</button>
+          <button type="button" class="ghost" id="zone-clear" disabled>Clear</button>
+        </div>
+        <div class="zone-status" id="zone-status"></div>
+
+        <h2>Existing zones</h2>
+        <div class="zone-list" id="zone-list"></div>
+
+        <h2>Recent events</h2>
+        <div class="event-list" id="event-list"></div>
+      </aside>
     </div>
   </section>
 
@@ -44,6 +88,7 @@
     <div class="filmstrip" id="filmstrip"></div>
   </section>
 
+  <script src="/static/zones.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>
