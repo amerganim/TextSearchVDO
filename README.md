@@ -55,6 +55,10 @@ corner, or at `/advanced`.
 
 ## Architecture
 
+**[How it works, step by step, with diagrams](docs/HOW-IT-WORKS.md)** — the
+full pipeline, which model does what, where each one runs, and why there is no
+LLM in it.
+
 The design is **index → retrieve → verify**, not summarise-then-search. A
 summary of 24h of hallway footage will never contain "father took his
 medicine at 08:47" unless something forced a model to look at that moment and

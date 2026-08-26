@@ -68,3 +68,50 @@ def test_pages_reference_only_assets_that_exist():
         html = (WEB / page).read_text(encoding="utf-8")
         for asset in re.findall(r'/static/([\w.-]+)', html):
             assert (WEB / asset).is_file(), f"{page} references missing {asset}"
+
+
+# ---------- docs ----------
+
+DOCS = Path(__file__).resolve().parent.parent / "docs"
+
+
+def test_the_architecture_page_exists_and_has_diagrams():
+    page = DOCS / "HOW-IT-WORKS.md"
+    assert page.is_file()
+    blocks = re.findall(r"```mermaid\r?\n([\s\S]*?)```", page.read_text(encoding="utf-8"))
+    assert len(blocks) >= 4, "the walkthrough lost its diagrams"
+
+
+def test_diagram_labels_avoid_html_emphasis():
+    """GitHub renders mermaid with HTML labels off.
+
+    <b> and <i> inside a node come out as literal text there - the diagram
+    still draws, so this is invisible until someone opens the page on GitHub.
+    <br/> is handled by mermaid itself and is fine.
+    """
+    page = (DOCS / "HOW-IT-WORKS.md").read_text(encoding="utf-8")
+    for block in re.findall(r"```mermaid\r?\n([\s\S]*?)```", page):
+        offenders = re.findall(r"</?(?:b|i|em|strong|span|div)>", block)
+        assert not offenders, f"HTML emphasis in a mermaid label: {offenders[:4]}"
+
+
+def test_diagrams_declare_a_known_type():
+    page = (DOCS / "HOW-IT-WORKS.md").read_text(encoding="utf-8")
+    for block in re.findall(r"```mermaid\r?\n([\s\S]*?)```", page):
+        first = block.strip().split()[0]
+        assert first in {"flowchart", "graph", "erDiagram", "sequenceDiagram", "stateDiagram-v2"}, first
+
+
+def test_the_page_states_the_model_set_it_actually_ships():
+    """The models named in the walkthrough must be the ones the code loads."""
+    page = (DOCS / "HOW-IT-WORKS.md").read_text(encoding="utf-8")
+    from tsv.config import DEFAULT
+
+    for filename in (
+        DEFAULT.detect.model_file,
+        DEFAULT.face.detector_file,
+        DEFAULT.face.embedder_file,
+        DEFAULT.clip.image_file,
+        DEFAULT.clip.text_file,
+    ):
+        assert filename in page, f"{filename} is loaded by the app but not documented"
