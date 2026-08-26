@@ -1,0 +1,166 @@
+"""Tier B: decode the candidate windows and score them properly.
+
+Only the windows Tier A flagged reach this stage, and even those are decoded
+at a few frames a second and a few hundred pixels wide. That is what keeps a
+night of 1080p footage tractable on an integrated GPU.
+
+The two things that generate false activity on real cameras are handled here:
+IR day/night switching (a whole-frame luminance step that looks like enormous
+motion) and sensor noise (single-pixel speckle, removed by an opening and a
+minimum blob area).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import av
+import cv2
+import numpy as np
+
+from tsv.config import TierBConfig
+
+
+@dataclass
+class ActivityTrace:
+    times: list[float] = field(default_factory=list)
+    scores: list[float] = field(default_factory=list)
+    ir_flips: list[float] = field(default_factory=list)
+    frames_decoded: int = 0
+    frames_scored: int = 0
+
+    @property
+    def sample_period(self) -> float:
+        if len(self.times) < 2:
+            return 0.0
+        deltas = np.diff(np.asarray(self.times))
+        return float(np.median(deltas)) if deltas.size else 0.0
+
+
+class _Scorer:
+    """MOG2 background subtraction with noise and IR-flip suppression."""
+
+    def __init__(self, cfg: TierBConfig, total_pixels: int) -> None:
+        self.cfg = cfg
+        self.total_pixels = total_pixels
+        self.min_blob_px = max(1, int(cfg.min_blob_area_frac * total_pixels))
+        self.kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE, (cfg.open_kernel, cfg.open_kernel)
+        )
+        self._reset()
+
+    def _reset(self) -> None:
+        self.bg = cv2.createBackgroundSubtractorMOG2(
+            history=self.cfg.mog2_history,
+            varThreshold=self.cfg.mog2_var_threshold,
+            detectShadows=True,
+        )
+        self.warmup_left = self.cfg.warmup_frames
+        self.cooldown_left = 0
+        self.prev_luma: float | None = None
+
+    def start_window(self) -> None:
+        """Each candidate window is scored from a fresh background model.
+
+        Windows can be hours apart, so carrying a model between them would
+        score the scene against a background that no longer exists.
+        """
+        self._reset()
+
+    def score(self, gray: np.ndarray) -> tuple[float, bool]:
+        """Return (foreground fraction, is_ir_flip)."""
+        luma = float(gray.mean())
+        flipped = (
+            self.prev_luma is not None
+            and abs(luma - self.prev_luma) > self.cfg.ir_flip_luma_delta
+        )
+        self.prev_luma = luma
+
+        if flipped:
+            # The entire frame changed at once. Rebuild the model rather than
+            # let it treat the new illumination as a moving object.
+            self._reset()
+            self.prev_luma = luma
+            self.cooldown_left = self.cfg.ir_flip_cooldown_frames
+            self.bg.apply(gray)
+            return 0.0, True
+
+        mask = self.bg.apply(gray)
+
+        if self.warmup_left > 0:
+            self.warmup_left -= 1
+            return 0.0, False
+        if self.cooldown_left > 0:
+            self.cooldown_left -= 1
+            return 0.0, False
+
+        # 255 is foreground, 127 is MOG2's shadow class - shadows are not
+        # motion and counting them doubles the apparent size of every person.
+        fg = (mask == 255).astype(np.uint8)
+        fg = cv2.morphologyEx(fg, cv2.MORPH_OPEN, self.kernel)
+
+        n_labels, _, stats, _ = cv2.connectedComponentsWithStats(fg, connectivity=8)
+        area = sum(
+            int(stats[i, cv2.CC_STAT_AREA])
+            for i in range(1, n_labels)
+            if stats[i, cv2.CC_STAT_AREA] >= self.min_blob_px
+        )
+        return area / self.total_pixels, False
+
+
+def trace_windows(
+    path: Path,
+    windows: list[tuple[float, float]],
+    cfg: TierBConfig,
+) -> ActivityTrace:
+    trace = ActivityTrace()
+    if not windows:
+        return trace
+
+    with av.open(str(path)) as container:
+        stream = container.streams.video[0]
+        stream.thread_type = "AUTO"
+        time_base = stream.time_base
+        if time_base is None:
+            return trace
+
+        src_w = stream.codec_context.width or cfg.width
+        src_h = stream.codec_context.height or cfg.width
+        out_w = min(cfg.width, src_w)
+        out_h = max(2, int(round(src_h * out_w / src_w)))
+        out_h -= out_h % 2
+        scorer = _Scorer(cfg, out_w * out_h)
+        period = 1.0 / cfg.sample_fps
+
+        for start, end in windows:
+            scorer.start_window()
+            # Seek lands on the keyframe at or before `start`; decoded frames
+            # before the window are still fed to the model (free warmup) but
+            # are not scored.
+            container.seek(int(start / time_base), stream=stream, backward=True)
+            next_sample = start
+
+            for frame in container.decode(stream):
+                if frame.pts is None:
+                    continue
+                t = float(frame.pts * time_base)
+                if t > end:
+                    break
+                trace.frames_decoded += 1
+                if t < next_sample:
+                    continue
+                next_sample = t + period
+
+                gray = frame.reformat(width=out_w, height=out_h, format="gray").to_ndarray()
+                score, flipped = scorer.score(gray)
+                if flipped:
+                    trace.ir_flips.append(t)
+                trace.times.append(t)
+                trace.scores.append(score)
+                trace.frames_scored += 1
+
+    order = np.argsort(np.asarray(trace.times), kind="stable")
+    trace.times = [trace.times[i] for i in order]
+    trace.scores = [trace.scores[i] for i in order]
+    return trace

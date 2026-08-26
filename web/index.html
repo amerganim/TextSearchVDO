@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TextSearchVDO</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>TextSearchVDO</h1>
+    <div class="stats" id="stats"></div>
+  </header>
+
+  <section class="controls">
+    <label>Camera
+      <select id="camera"><option value="">All</option></select>
+    </label>
+    <label>Day
+      <select id="day"></select>
+    </label>
+    <div class="legend">
+      <span><i class="swatch recorded"></i>recorded</span>
+      <span><i class="swatch active"></i>activity</span>
+      <span><i class="swatch gap"></i>no recording</span>
+    </div>
+  </section>
+
+  <section class="timeline-wrap">
+    <canvas id="timeline" height="88"></canvas>
+    <div class="hours" id="hours"></div>
+    <div class="hint" id="hint">Click the timeline to jump to that moment.</div>
+  </section>
+
+  <section class="main">
+    <div class="player">
+      <video id="video" controls preload="metadata"></video>
+      <div class="now" id="now">No segment selected</div>
+    </div>
+    <div class="filmstrip" id="filmstrip"></div>
+  </section>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
