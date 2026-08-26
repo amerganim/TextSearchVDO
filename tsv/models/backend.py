@@ -24,12 +24,22 @@ import numpy as np
 
 # Ordered best-effort. Each entry is (runtime, device); the first that both
 # imports and compiles the model wins.
+#
+# The order below is measured, not assumed. On the baseline machine (i5-1235U
+# with Intel UHD graphics), yolo11n at 640px:
+#
+#     openvino:GPU      33 ms      the iGPU is worth having
+#     onnxruntime:CPU   45 ms
+#     openvino:CPU      53 ms
+#
+# OpenVINO's CPU path losing to ONNX Runtime's was the surprise - it sits last
+# rather than ahead of ORT on the strength of being Intel's own runtime.
 DEFAULT_PREFERENCE: tuple[tuple[str, str], ...] = (
     ("openvino", "GPU"),      # Intel iGPU - the baseline target's only accelerator
     ("onnxruntime", "DML"),   # DirectML, covers AMD/NVIDIA/Intel on Windows
     ("onnxruntime", "CUDA"),
-    ("openvino", "CPU"),      # OpenVINO's CPU path beats ORT's on Intel cores
-    ("onnxruntime", "CPU"),   # always available
+    ("onnxruntime", "CPU"),   # always available, and faster than OpenVINO's CPU
+    ("openvino", "CPU"),      # only reached if onnxruntime is missing entirely
 )
 
 
@@ -92,7 +102,10 @@ class OpenVINOBackend:
         if device not in core.available_devices:
             raise RuntimeError(f"OpenVINO device {device} not present")
 
-        config: dict[str, str] = {"PERFORMANCE_HINT": "THROUGHPUT"}
+        # LATENCY, not THROUGHPUT. The pipeline submits one letterboxed frame
+        # at a time and blocks on the result; the throughput hint optimises for
+        # concurrent streams instead and measured 8x slower per frame on CPU.
+        config: dict[str, str] = {"PERFORMANCE_HINT": "LATENCY"}
         if threads and device == "CPU":
             config["INFERENCE_NUM_THREADS"] = str(threads)
 

@@ -85,6 +85,25 @@ Runtime, OpenVINO) rather than ONNX Runtime execution providers, because
 to go through OpenVINO directly. Which backend was chosen is reported, never
 silently decided.
 
+Measured on the baseline machine (i5-1235U, Intel UHD graphics), yolo11n at
+640px, one frame at a time:
+
+| backend | per frame | |
+|---|---:|---|
+| `openvino:GPU` | 33 ms | the iGPU is worth having |
+| `onnxruntime:CPU` | 45 ms | |
+| `openvino:CPU` | 53 ms | |
+
+Two things came out of measuring rather than assuming. OpenVINO's CPU path
+*loses* to ONNX Runtime's, so it sits last in the preference order rather than
+ahead of it on the strength of being Intel's own runtime. And OpenVINO must be
+given `PERFORMANCE_HINT: LATENCY` — the throughput hint optimises for
+concurrent streams, and this pipeline submits one frame and blocks, which
+measured 8× slower per frame.
+
+`openvino` is an optional dependency; without it everything falls back to
+ONNX Runtime on the CPU.
+
 **Tracking is ByteTrack** with a constant-velocity Kalman filter. The filter
 matters more here than in a typical benchmark: frames are sampled a few per
 second rather than at 25 fps, so a walking person can move most of their own
@@ -151,6 +170,18 @@ pipeline be tested for correctness on a machine with no cameras attached. The
 scene deliberately includes sensor noise and a textured background — on a
 clean synthetic scene the encoder compresses idle frames to almost nothing and
 Tier A looks far better than it will in reality.
+
+**The synthetic clips validate Phase 0, not Phase 1.** Their moving subject is
+a rectangle, so a real detector correctly finds nothing in them — running
+`analyze` over synthetic footage reports zero tracklets, and that is the right
+answer rather than a failure. Phase 1's coordinate maths, association and
+bookkeeping are covered by unit tests and by an end-to-end run against a
+threshold-based stand-in detector; whether detection is any *good* is a
+question only real footage can answer.
+
+`tests/test_model_integration.py` checks the exported graph against what the
+decoder assumes — static input shape, raw predictions rather than baked-in
+NMS, 4 + 80 attributes — and skips entirely when no model has been exported.
 
 ```bash
 .venv/Scripts/python tools/make_synthetic.py --out footage/ch01_20260826120000.mp4 --duration 120 --activity "18-26,55-61,95-104"

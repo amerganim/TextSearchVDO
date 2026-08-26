@@ -4,3 +4,7 @@ numpy>=2.5.0
 fastapi>=0.141.0
 uvicorn[standard]>=0.52.0
 pillow>=12.0.0
+
+# Optional: Intel iGPU/NPU acceleration. The pipeline falls back to
+# onnxruntime CPU when this is absent.
+openvino>=2026.3
