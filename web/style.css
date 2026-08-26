@@ -141,3 +141,47 @@ canvas {
 .card .sub { color: var(--muted); font-size: 12px; }
 
 .empty { color: var(--muted); padding: 12px 2px; }
+
+/* Object labels from the detection pass. */
+
+.tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+
+.tag {
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 0 6px;
+  border-radius: 3px;
+  background: #26313f;
+  color: #b9c6d8;
+  white-space: nowrap;
+}
+
+.card.dimmed { opacity: .38; }
+
+.objects { display: flex; flex-wrap: wrap; gap: 10px; padding-top: 12px; }
+
+.object {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 92px;
+  cursor: pointer;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+}
+
+.object img {
+  width: 92px;
+  height: 92px;
+  object-fit: cover;
+  border-radius: 5px;
+  background: #000;
+  border: 1px solid var(--line);
+}
+
+.object:hover img { border-color: var(--accent); }
+.object .cap { font-size: 11px; color: var(--muted); text-align: center; }
+.object .cap b { color: var(--text); font-weight: 600; display: block; }

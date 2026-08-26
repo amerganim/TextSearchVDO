@@ -6,11 +6,15 @@ timestamp and the frame.
 
 Everything runs on the user's own machine. No footage leaves the device.
 
-**Phase 0 (this repo, working):** turn a folder of recordings into a scrubable
-timeline where the small fraction of the day that contains activity is
-obvious. No models involved. On the two synthetic test clips it discards ~75%
-of the recording, and it runs at **35–140× realtime on a CPU/iGPU laptop with
-no discrete GPU** — roughly 10 minutes to trawl a 24-hour day.
+**Phase 0 (working):** turn a folder of recordings into a scrubable timeline
+where the small fraction of the day that contains activity is obvious. No
+models involved. On the synthetic test clips it discards ~75% of the
+recording, and runs at **35–140× realtime on a CPU/iGPU laptop with no
+discrete GPU** — roughly 10 minutes to trawl a 24-hour day.
+
+**Phase 1 (working):** detect and track objects inside those segments, so the
+timeline can say *two people and a dog* rather than *something moved*. Runs
+only over what Phase 0 kept.
 
 ## Architecture
 
@@ -24,8 +28,8 @@ Cheap stages gate expensive ones. CCTV is 90–97% static, so nothing expensive
 should ever see a frame a cheap filter could have discarded:
 
 ```
-Stage 0  Motion segmentation              <- Phase 0, this repo
-Stage 1  Detection + tracking (YOLO/ByteTrack)
+Stage 0  Motion segmentation                        <- done
+Stage 1  Detection + tracking (YOLO / ByteTrack)    <- done
 Stage 2  Identity (face + re-ID) and user-drawn zones
 Stage 3  Frame embeddings, VLM captions on person crops, audio ASR
 Stage 4  Hybrid retrieval + local LLM answers with timestamps
@@ -67,6 +71,28 @@ rather than allowed to treat the new illumination as a moving object).
 Segments then come from hysteresis + gap merging + pre/post roll, so one
 person walking through is one event rather than twenty.
 
+## Stage 1: detection and tracking
+
+Runs only over the segments Phase 0 found, which is the point of the cascade —
+the detector never sees the ~73% of a recording that held nothing.
+
+**Runtime is not torch.** Neither ultralytics nor torch is a runtime
+dependency; at inference this is an ONNX graph plus numpy.
+`tools/export_model.py` uses them once, from a throwaway environment, to
+produce the ONNX file. The backend abstraction sits over *runtimes* (ONNX
+Runtime, OpenVINO) rather than ONNX Runtime execution providers, because
+`onnxruntime-openvino` has no wheel for Python 3.14 — the Intel iGPU path has
+to go through OpenVINO directly. Which backend was chosen is reported, never
+silently decided.
+
+**Tracking is ByteTrack** with a constant-velocity Kalman filter. The filter
+matters more here than in a typical benchmark: frames are sampled a few per
+second rather than at 25 fps, so a walking person can move most of their own
+width between samples and raw IoU between consecutive detections collapses.
+Association runs per class, and the second pass over low-confidence detections
+is what keeps someone walking behind furniture as one tracklet instead of
+three.
+
 ## Usage
 
 ```bash
@@ -74,13 +100,35 @@ python -m tsv ingest /path/to/footage
 ```
 
 ```bash
+python -m tsv analyze
+```
+
+```bash
 python -m tsv serve
 ```
 
-Then open http://127.0.0.1:8000. `python -m tsv stats` prints what is indexed.
+Then open http://127.0.0.1:8000. `python -m tsv stats` prints what is indexed,
+and `python -m tsv bench` times the detector on every backend that will load
+it.
 
-Ingest is idempotent — re-running over a growing NVR export directory only
-processes what changed.
+Both `ingest` and `analyze` are idempotent — re-running over a growing NVR
+export directory only processes what changed. Pass `--force` to redo work.
+
+### Getting a detector
+
+```bash
+py -3.14 -m venv .venv-export && .venv-export/Scripts/python -m pip install ultralytics onnx onnxslim
+```
+
+```bash
+.venv-export/Scripts/python tools/export_model.py --out data/models
+```
+
+The export venv can be deleted afterwards; only `data/models/yolo11n.onnx`
+(~10 MB) is needed to run. Two export flags are not the default everywhere and
+both matter: `nms=False`, because `tsv.models.detect` does its own class-aware
+NMS and a graph with NMS baked in has a different output layout entirely; and
+`dynamic=False`, because OpenVINO compiles static shapes far better.
 
 ## Setup
 
@@ -126,6 +174,9 @@ tune, in roughly this order:
    `videos.ts_source` before trusting a timeline.
 4. **Clock sync across cameras**, before it silently corrupts cross-camera
    reasoning in later phases.
+5. **Detection thresholds and sample rate.** `DetectConfig.detect_fps` trades
+   cost against tracking stability linearly, and `decode_width` decides whether
+   distant figures survive at all. Both want real footage to settle.
 
 Build a gold set of 50–100 real queries early. Without one there is no way to
 tell whether a threshold change helped.
@@ -136,9 +187,16 @@ tell whether a threshold change helped.
 tsv/motion/packets.py    Tier A - packet-size triage
 tsv/motion/decode.py     Tier B - MOG2 scoring, IR flip handling
 tsv/motion/segments.py   activity trace -> segments
+tsv/frames.py            window sampling, shared by both analysis stages
 tsv/probe.py             container metadata + recording-time recovery
-tsv/ingest.py            orchestration, idempotency
-tsv/api.py               FastAPI: timeline, segments, thumbnails, ranged media
+tsv/ingest.py            Phase 0 orchestration, idempotency
+tsv/models/backend.py    runtime selection (ONNX Runtime / OpenVINO)
+tsv/models/detect.py     YOLO pre/post-processing, no torch
+tsv/track/bytetrack.py   two-stage association
+tsv/track/kalman.py      constant-velocity motion model
+tsv/boxes.py             box geometry, IoU, class-aware NMS
+tsv/analyze.py           Phase 1 orchestration
+tsv/api.py               FastAPI: timeline, segments, objects, ranged media
 tsv/config.py            every tunable, grouped by stage
 web/                     timeline UI
 ```

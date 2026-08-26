@@ -232,16 +232,20 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
         day: str | None = None,
         label: str | None = None,
         camera_id: int | None = None,
+        segment_id: int | None = None,
         min_score: float = 0.0,
         limit: int = Query(300, le=2000),
         offset: int = 0,
     ) -> list[dict]:
-        """Tracked objects, newest-first within the day, for the object view."""
+        """Tracked objects in time order, for the object view."""
         clauses: list[str] = []
         params: list = []
         if camera_id:
             clauses.append("AND t.camera_id = ?")
             params.append(camera_id)
+        if segment_id:
+            clauses.append("AND t.segment_id = ?")
+            params.append(segment_id)
         if day:
             try:
                 start, end = _day_bounds(date.fromisoformat(day))

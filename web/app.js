@@ -4,6 +4,7 @@ const api = (path) => fetch(path).then((r) => r.json());
 const state = {
   day: null,
   cameraId: "",
+  label: "",
   timeline: null,
   segments: [],
   selected: null,
@@ -20,6 +21,22 @@ const hms = (s) => {
   const m = Math.floor((s % 3600) / 60);
   return h ? `${h}h ${pad(m)}m` : `${m}m ${pad(s % 60)}s`;
 };
+
+/** Detection labels for a segment, e.g. {person: 2, dog: 1}. */
+function labelsOf(segment) {
+  if (!segment.labels) return null;
+  try {
+    return JSON.parse(segment.labels);
+  } catch {
+    return null;
+  }
+}
+
+function matchesFilter(segment) {
+  if (!state.label) return true;
+  const labels = labelsOf(segment);
+  return Boolean(labels && labels[state.label]);
+}
 
 /* ---------- timeline ---------- */
 
@@ -57,14 +74,27 @@ function drawTimeline() {
     ctx.fillRect(i * barW, top, Math.max(barW, 0.6), bandH);
   }
 
-  // Activity on top, height scaled by score so a busy minute reads louder.
+  // With a label filter on, non-matching activity recedes rather than
+  // disappearing, so "when was the dog here" reads against the rest of the
+  // day instead of hiding it.
+  const matching = new Set();
+  if (state.label) {
+    for (const segment of state.segments) {
+      if (!matchesFilter(segment)) continue;
+      const from = Math.floor((segment.ts_start - data.day_start) / data.bucket_seconds);
+      const to = Math.ceil((segment.ts_end - data.day_start) / data.bucket_seconds);
+      for (let i = from; i <= to; i++) matching.add(i);
+    }
+  }
+
+  // Activity, height scaled by score so a busy minute reads louder.
   const peak = Math.max(...data.activity, 1e-6);
   for (let i = 0; i < n; i++) {
     const score = data.activity[i];
     if (score <= 0) continue;
     const frac = Math.min(1, Math.sqrt(score / peak));
     const h = Math.max(4, frac * bandH);
-    ctx.fillStyle = "#ffb020";
+    ctx.fillStyle = !state.label || matching.has(i) ? "#ffb020" : "rgba(255,176,32,0.22)";
     ctx.fillRect(i * barW, top + bandH - h, Math.max(barW, 1.2), h);
   }
 
@@ -104,14 +134,29 @@ function renderFilmstrip() {
     strip.innerHTML = '<div class="empty">No activity indexed for this day.</div>';
     return;
   }
+
   strip.innerHTML = state.segments
     .map((s) => {
       const on = state.selected && state.selected.id === s.id ? " selected" : "";
-      return `<button class="card${on}" data-id="${s.id}">
+      const dim = matchesFilter(s) ? "" : " dimmed";
+      const labels = labelsOf(s);
+      let tags = "";
+      if (labels) {
+        tags =
+          '<span class="tags">' +
+          Object.entries(labels)
+            .map(([name, n]) => `<span class="tag">${n > 1 ? n + " " : ""}${name}</span>`)
+            .join("") +
+          "</span>";
+      } else if (s.analyzed_at) {
+        tags = '<span class="tags"><span class="tag">nothing recognised</span></span>';
+      }
+      return `<button class="card${on}${dim}" data-id="${s.id}">
         <img loading="lazy" src="/api/thumb/${s.id}" alt="">
         <span class="meta">
           <span class="time">${clockOf(s.ts_start)}</span>
           <span class="sub">${hms(s.ts_end - s.ts_start)} &middot; ${(s.activity_score * 100).toFixed(1)}%</span>
+          ${tags}
         </span>
       </button>`;
     })
@@ -119,6 +164,33 @@ function renderFilmstrip() {
 
   strip.querySelectorAll(".card").forEach((el) => {
     el.onclick = () => selectSegment(state.segments.find((s) => s.id === Number(el.dataset.id)));
+  });
+}
+
+/* ---------- objects ---------- */
+
+async function loadObjects(segment) {
+  const box = $("objects");
+  box.innerHTML = "";
+  if (!segment || !segment.n_tracklets) return;
+
+  const objects = await api(`/api/objects?segment_id=${segment.id}`);
+  box.innerHTML = objects
+    .map(
+      (o) => `<button class="object" data-t="${o.t_start}" title="${o.label}">
+        <img loading="lazy" src="/api/crop/${o.id}" alt="${o.label}">
+        <span class="cap"><b>${o.label}</b>${clockOf(o.ts_start)}</span>
+      </button>`
+    )
+    .join("");
+
+  box.querySelectorAll(".object").forEach((el) => {
+    el.onclick = () => {
+      const video = $("video");
+      // Land slightly before the object appeared rather than exactly on it.
+      video.currentTime = Math.max(0, Number(el.dataset.t) - 1);
+      video.play().catch(() => {});
+    };
   });
 }
 
@@ -149,17 +221,24 @@ function selectSegment(segment) {
 
   renderFilmstrip();
   drawTimeline();
+  loadObjects(segment);
 }
 
 function jumpToFraction(frac) {
   if (!state.timeline || !state.segments.length) return;
   const ts = state.timeline.day_start + frac * 86400;
-  // Nearest segment by start time - clicking empty timeline should still land
-  // somewhere useful rather than do nothing.
-  let best = state.segments[0];
+  // Prefer segments matching the active filter, so clicking near a dog
+  // sighting does not land on an unrelated one.
+  const pool = state.segments.filter(matchesFilter);
+  const candidates = pool.length ? pool : state.segments;
+
+  let best = candidates[0];
   let bestGap = Infinity;
-  for (const s of state.segments) {
-    const gap = ts >= s.ts_start && ts <= s.ts_end ? 0 : Math.min(Math.abs(s.ts_start - ts), Math.abs(s.ts_end - ts));
+  for (const s of candidates) {
+    const gap =
+      ts >= s.ts_start && ts <= s.ts_end
+        ? 0
+        : Math.min(Math.abs(s.ts_start - ts), Math.abs(s.ts_end - ts));
     if (gap < bestGap) {
       bestGap = gap;
       best = s;
@@ -170,10 +249,29 @@ function jumpToFraction(frac) {
 
 /* ---------- loading ---------- */
 
+async function loadLabels() {
+  const query = new URLSearchParams();
+  if (state.day) query.set("day", state.day);
+  if (state.cameraId) query.set("camera_id", state.cameraId);
+  const labels = await api(`/api/labels?${query}`);
+
+  const select = $("label");
+  const previous = state.label;
+  select.innerHTML =
+    '<option value="">Everything</option>' +
+    labels.map((l) => `<option value="${l.label}">${l.label} (${l.n})</option>`).join("");
+
+  // Keep the filter across day changes, but only while it still applies.
+  state.label = labels.some((l) => l.label === previous) ? previous : "";
+  select.value = state.label;
+  select.disabled = labels.length === 0;
+}
+
 async function loadDay() {
   if (!state.day) {
     state.timeline = null;
     state.segments = [];
+    $("objects").innerHTML = "";
     renderFilmstrip();
     drawTimeline();
     return;
@@ -183,6 +281,8 @@ async function loadDay() {
   state.timeline = await api(`/api/timeline?${query}`);
   state.segments = state.timeline.segments;
   state.selected = null;
+  $("objects").innerHTML = "";
+  await loadLabels();
   renderFilmstrip();
   drawTimeline();
 }
@@ -203,9 +303,15 @@ async function boot() {
   renderHours();
 
   const summary = await api("/api/summary");
+  let objectsLine = "";
+  if (summary.n_analyzed) {
+    objectsLine = ` &middot; <b>${summary.n_tracklets}</b> objects tracked`;
+  } else if (summary.n_segments) {
+    objectsLine = " &middot; not yet analysed — run <b>python -m tsv analyze</b>";
+  }
   $("stats").innerHTML = summary.n_videos
     ? `<b>${hms(summary.duration)}</b> of footage &rarr; <b>${hms(summary.active_seconds)}</b> worth watching
-       in <b>${summary.n_segments}</b> segments &middot; <b>${(summary.reduction * 100).toFixed(1)}%</b> needs no review`
+       in <b>${summary.n_segments}</b> segments &middot; <b>${(summary.reduction * 100).toFixed(1)}%</b> needs no review${objectsLine}`
     : "Nothing indexed yet — run <b>python -m tsv ingest &lt;folder&gt;</b>";
 
   const cameras = await api("/api/cameras");
@@ -220,6 +326,11 @@ async function boot() {
   $("day").onchange = async (e) => {
     state.day = e.target.value;
     await loadDay();
+  };
+  $("label").onchange = (e) => {
+    state.label = e.target.value;
+    renderFilmstrip();
+    drawTimeline();
   };
 
   $("timeline").onclick = (e) => {
