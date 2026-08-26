@@ -25,7 +25,7 @@ import cv2
 import numpy as np
 
 from tsv.boxes import nms
-from tsv.models.backend import SMALL_MODEL_PREFERENCE, Backend, load_model
+from tsv.models.backend import CPU_FIRST_PREFERENCE, Backend, load_model
 
 # Where ArcFace expects the five landmarks to land in a 112x112 crop. These
 # are the reference positions the model was trained against; they are not
@@ -143,7 +143,7 @@ class SCRFDDetector:
         force_backend: str | None = None,
     ) -> None:
         self.backend = backend or load_model(
-            model_path, preference=SMALL_MODEL_PREFERENCE, force=force_backend
+            model_path, preference=CPU_FIRST_PREFERENCE, force=force_backend
         )
         self.size = size
         self.conf_threshold = conf_threshold
@@ -215,7 +215,7 @@ class ArcFaceEmbedder:
         force_backend: str | None = None,
     ) -> None:
         self.backend = backend or load_model(
-            model_path, preference=SMALL_MODEL_PREFERENCE, force=force_backend
+            model_path, preference=CPU_FIRST_PREFERENCE, force=force_backend
         )
         self.size = size
 

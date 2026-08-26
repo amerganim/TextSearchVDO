@@ -376,3 +376,104 @@ def test_summary_counts_identities(zone_client):
     body = zone_client.get("/api/summary").json()
     assert body["n_identities"] == 1
     assert body["n_named"] == 1
+
+
+# ---------- Phase 3: search ----------
+
+
+def test_search_needs_no_models_to_match_words(zone_client):
+    zone_client.post("/api/search/reindex")
+    body = zone_client.get("/api/search?q=person").json()
+    assert body["n"] > 0
+    assert all("lexical" in r["sources"] for r in body["results"])
+
+
+def test_reindex_reports_what_it_indexed(zone_client):
+    body = zone_client.post("/api/search/reindex").json()
+    assert body["indexed"] >= 1
+
+
+def test_search_results_are_playable(zone_client):
+    zone_client.post("/api/search/reindex")
+    hit = zone_client.get("/api/search?q=person").json()["results"][0]
+    assert {"segment_id", "video_id", "t_start", "ts_start"} <= set(hit)
+    assert zone_client.get(f"/api/media/{hit['video_id']}").status_code in (200, 206)
+
+
+def test_search_can_be_narrowed_by_filters(zone_client):
+    zone_client.post("/api/search/reindex")
+    assert zone_client.get("/api/search?q=person&camera_id=9999").json()["n"] == 0
+    assert zone_client.get("/api/search?q=person&label=giraffe").json()["n"] == 0
+    assert zone_client.get("/api/search?q=person&label=person").json()["n"] > 0
+
+
+def test_search_by_person_after_enrolment(zone_client):
+    tracklet_id = _first_tracklet(zone_client)
+    zone_client.post("/api/identities/enroll", json={"tracklet_id": tracklet_id, "name": "Rafi"})
+    zone_client.post("/api/search/reindex")
+
+    assert zone_client.get("/api/search?identity=Rafi").json()["n"] > 0
+    assert zone_client.get("/api/search?identity=Nobody").json()["n"] == 0
+
+
+def test_a_query_matching_nothing_returns_nothing(zone_client):
+    """It must not fall back to browsing and answer a different question."""
+    zone_client.post("/api/search/reindex")
+    assert zone_client.get("/api/search?q=helicopter").json()["n"] == 0
+
+
+def test_an_empty_query_browses(zone_client):
+    body = zone_client.get("/api/search").json()
+    assert body["n"] > 0
+    assert all(r["sources"] == ["filter"] for r in body["results"])
+
+
+def test_search_rejects_a_malformed_day(zone_client):
+    assert zone_client.get("/api/search?q=person&day=nonsense").status_code == 400
+
+
+def test_search_survives_hostile_query_text(zone_client):
+    """Users type quotes and FTS operators; nothing may 500."""
+    zone_client.post("/api/search/reindex")
+    for hostile in ("person*", "-person", "a AND OR", chr(34), "^%$#"):
+        assert zone_client.get("/api/search", params={"q": hostile}).status_code == 200
+
+
+def test_summary_reports_whether_semantic_search_is_available(zone_client):
+    body = zone_client.get("/api/summary").json()
+    assert "semantic_ready" in body
+    assert "n_embedded" in body
+
+
+def test_concurrent_requests_do_not_corrupt_the_connection(zone_client):
+    """FastAPI runs sync endpoints in a threadpool.
+
+    A single sqlite3 connection shared across those threads raises
+    "bad parameter or other API misuse" under concurrent execute() calls, even
+    with check_same_thread=False. A real page requests several thumbnails at
+    once, so this is the normal case, not a stress test.
+    """
+    import concurrent.futures
+
+    zone_client.post("/api/search/reindex")
+    paths = [
+        "/api/summary", "/api/cameras", "/api/days",
+        "/api/objects", "/api/labels", "/api/zones",
+        "/api/events", "/api/identities", "/api/search?q=person",
+    ] * 6
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=12) as pool:
+        codes = list(pool.map(lambda p: zone_client.get(p).status_code, paths))
+
+    assert set(codes) == {200}, f"unexpected statuses: {sorted(set(codes))}"
+
+
+def test_concurrent_thumbnail_requests(zone_client):
+    import concurrent.futures
+
+    segments = zone_client.get("/api/segments").json()
+    ids = [s["id"] for s in segments] * 8
+    with concurrent.futures.ThreadPoolExecutor(max_workers=12) as pool:
+        codes = list(pool.map(lambda i: zone_client.get(f"/api/thumb/{i}").status_code, ids))
+    assert set(codes) <= {200, 404}
+    assert 500 not in codes

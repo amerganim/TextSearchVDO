@@ -136,6 +136,19 @@ class FaceConfig:
 
 
 @dataclass(frozen=True)
+class ClipConfig:
+    """Phase 3: semantic search."""
+
+    image_file: str = "clip_image.onnx"
+    text_file: str = "clip_text.onnx"
+    size: int = 224
+    # "pad" keeps the whole subject; "center" reproduces CLIP's own
+    # preprocessing at the cost of a standing person's head and feet.
+    crop_mode: str = "pad"
+    force_backend: str | None = None
+
+
+@dataclass(frozen=True)
 class Config:
     data_dir: Path = Path("data")
     # Models are shared between indexes rather than belonging to one, so this
@@ -144,6 +157,7 @@ class Config:
     tier_a: TierAConfig = field(default_factory=TierAConfig)
     detect: DetectConfig = field(default_factory=DetectConfig)
     face: FaceConfig = field(default_factory=FaceConfig)
+    clip: ClipConfig = field(default_factory=ClipConfig)
     tier_b: TierBConfig = field(default_factory=TierBConfig)
     segments: SegmentConfig = field(default_factory=SegmentConfig)
     thumb_width: int = 320
@@ -176,6 +190,18 @@ class Config:
     @property
     def face_embedder_path(self) -> Path:
         return self.model_dir / self.face.embedder_file
+
+    @property
+    def clip_image_path(self) -> Path:
+        return self.model_dir / self.clip.image_file
+
+    @property
+    def clip_text_path(self) -> Path:
+        return self.model_dir / self.clip.text_file
+
+    @property
+    def has_clip_models(self) -> bool:
+        return self.clip_image_path.is_file() and self.clip_text_path.is_file()
 
     @property
     def has_face_models(self) -> bool:

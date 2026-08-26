@@ -12,6 +12,14 @@
     <div class="stats" id="stats"></div>
   </header>
 
+  <section class="searchbar">
+    <input id="q" type="search" placeholder="Search: a person carrying a box, a dog, someone at the front door&hellip;"
+           autocomplete="off" spellcheck="false">
+    <button type="button" id="search-go">Search</button>
+    <button type="button" class="ghost" id="search-clear" hidden>Clear</button>
+    <span class="search-note" id="search-note"></span>
+  </section>
+
   <section class="controls">
     <label>Camera
       <select id="camera"><option value="">All</option></select>

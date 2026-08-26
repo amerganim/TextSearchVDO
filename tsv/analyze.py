@@ -28,6 +28,7 @@ from tsv.config import Config
 from tsv.frames import sample_windows
 from tsv.identity import aggregate, store_tracklet_embedding
 from tsv.models.detect import CCTV_CLASSES, COCO_CLASSES, Detector
+from tsv.models.clip import ClipEmbedder, build_clip
 from tsv.models.face import FacePipeline
 from tsv.track.bytetrack import ByteTracker, Track, TrackerConfig
 
@@ -45,6 +46,7 @@ class AnalyzeResult:
     n_tracklets: int = 0
     n_detections: int = 0
     n_faces: int = 0
+    n_embedded: int = 0
     frames: int = 0
     elapsed: float = 0.0
     labels: Counter = field(default_factory=Counter)
@@ -75,6 +77,10 @@ class AnalyzeSummary:
     @property
     def total_faces(self) -> int:
         return sum(r.n_faces for r in self.analyzed)
+
+    @property
+    def total_embedded(self) -> int:
+        return sum(r.n_embedded for r in self.analyzed)
 
     @property
     def labels(self) -> Counter:
@@ -150,10 +156,14 @@ def _write_tracklets(
     face_crops: dict[int, list[tuple[float, np.ndarray]]] | None = None,
     face: FacePipeline | None = None,
     min_face_px: int = 24,
-) -> tuple[int, int, int, Counter]:
+    clip: ClipEmbedder | None = None,
+    clip_crops: dict[int, np.ndarray] | None = None,
+    scene_frame: np.ndarray | None = None,
+) -> tuple[int, int, int, int, Counter]:
     labels: Counter = Counter()
     n_detections = 0
     n_faces = 0
+    n_embedded = 0
 
     for track in tracks:
         if not track.observations:
@@ -225,11 +235,30 @@ def _write_tracklets(
                 )
                 n_faces += 1
 
+        if clip is not None and clip_crops is not None:
+            crop = clip_crops.get(track.track_id)
+            if crop is not None and crop.size:
+                store_tracklet_embedding(conn, tracklet_id, "clip", clip.embed_image(crop))
+                n_embedded += 1
+
+    if clip is not None and scene_frame is not None and scene_frame.size:
+        # A scene-level vector as well as per-object ones: "a car in the
+        # driveway" is a property of the frame, not of any one crop.
+        vector = clip.embed_image(scene_frame)
+        conn.execute(
+            """INSERT INTO segment_embeddings(segment_id, kind, dim, vector)
+               VALUES (?,?,?,?)
+               ON CONFLICT(segment_id, kind) DO UPDATE SET
+                   dim = excluded.dim, vector = excluded.vector""",
+            (segment["id"], "clip", len(vector), vector.astype(np.float32).tobytes()),
+        )
+        n_embedded += 1
+
     conn.execute(
         "UPDATE segments SET analyzed_at = ?, n_tracklets = ?, labels = ? WHERE id = ?",
         (time.time(), len(tracks), json.dumps(dict(labels)) if labels else None, segment["id"]),
     )
-    return len(tracks), n_detections, n_faces, labels
+    return len(tracks), n_detections, n_faces, n_embedded, labels
 
 
 def analyze_video(
@@ -240,6 +269,7 @@ def analyze_video(
     force: bool = False,
     tracker_config: TrackerConfig | None = None,
     face: FacePipeline | None = None,
+    clip: ClipEmbedder | None = None,
 ) -> AnalyzeResult:
     started = time.time()
     video = conn.execute("SELECT * FROM videos WHERE id = ?", (video_id,)).fetchone()
@@ -271,27 +301,35 @@ def analyze_video(
     best_score: dict[int, float] = {}
     # The best few person crops per track, held for the face pass at flush.
     face_crops: dict[int, list[tuple[float, np.ndarray]]] = {}
+    clip_crops: dict[int, np.ndarray] = {}
+    # The sampled frame nearest this segment's peak, for the scene vector.
+    scene_frame: np.ndarray | None = None
+    scene_gap = float("inf")
     current_window = 0
     frame_w = frame_h = 0
     frames = 0
-    n_tracklets = n_detections = n_faces = 0
+    n_tracklets = n_detections = n_faces = n_embedded = 0
     labels: Counter = Counter()
 
     def flush(window_index: int) -> None:
-        nonlocal tracker, sample_times, crops, best_score, face_crops
-        nonlocal n_tracklets, n_detections, n_faces, labels
+        nonlocal tracker, sample_times, crops, best_score, face_crops, clip_crops
+        nonlocal scene_frame, scene_gap
+        nonlocal n_tracklets, n_detections, n_faces, n_embedded, labels
         if frame_w and frame_h:
-            added, dets, faces_found, found = _write_tracklets(
+            added, dets, faces_found, embedded, found = _write_tracklets(
                 conn, segments[window_index], video, tracker.close(),
                 sample_times, frame_w, frame_h, crops, cfg.crop_dir,
                 face_crops=face_crops, face=face, min_face_px=cfg.face.min_face_px,
+                clip=clip, clip_crops=clip_crops, scene_frame=scene_frame,
             )
             n_tracklets += added
             n_detections += dets
             n_faces += faces_found
+            n_embedded += embedded
             labels.update(found)
         tracker = ByteTracker(tracker_config)
-        sample_times, crops, best_score, face_crops = {}, {}, {}, {}
+        sample_times, crops, best_score, face_crops, clip_crops = {}, {}, {}, {}, {}
+        scene_frame, scene_gap = None, float("inf")
 
     try:
         for sample in sample_windows(
@@ -303,6 +341,10 @@ def analyze_video(
                 current_window = sample.window_index
 
             frame_h, frame_w = sample.frame.shape[:2]
+            if clip is not None:
+                gap = abs(sample.t - float(segments[current_window]["peak_offset"]))
+                if gap < scene_gap:
+                    scene_gap, scene_frame = gap, sample.frame.copy()
             index = len(sample_times)
             sample_times[index] = sample.t
             frames += 1
@@ -331,6 +373,11 @@ def analyze_video(
                     if encoded:
                         best_score[track.track_id] = track.score
                         crops[track.track_id] = encoded
+                        if clip is not None:
+                            x1, y1, x2, y2 = (int(v) for v in track.observations[-1][1:])
+                            region = sample.frame[max(0, y1):y2, max(0, x1):x2]
+                            if region.size:
+                                clip_crops[track.track_id] = region.copy()
 
                 if face is not None and track.cls == PERSON_CLASS:
                     _remember_face_crop(
@@ -346,7 +393,8 @@ def analyze_video(
     return AnalyzeResult(
         video_id=video_id, path=path, status="analyzed",
         n_segments=len(segments), n_tracklets=n_tracklets, n_detections=n_detections,
-        n_faces=n_faces, frames=frames, elapsed=time.time() - started, labels=labels,
+        n_faces=n_faces, n_embedded=n_embedded,
+        frames=frames, elapsed=time.time() - started, labels=labels,
     )
 
 
@@ -379,6 +427,8 @@ def analyze_all(
     on_result: Callable[[AnalyzeResult], None] | None = None,
     face: FacePipeline | None = None,
     with_faces: bool = True,
+    clip: ClipEmbedder | None = None,
+    with_clip: bool = True,
 ) -> AnalyzeSummary:
     classes = frozenset(cfg.detect.classes) if cfg.detect.classes else CCTV_CLASSES
     detector = detector or Detector(
@@ -391,15 +441,24 @@ def analyze_all(
     )
     if face is None and with_faces:
         face = build_face_pipeline(cfg)
+    if clip is None and with_clip:
+        clip = build_clip(
+            cfg.model_dir, cfg.clip.image_file, cfg.clip.text_file,
+            crop_mode=cfg.clip.crop_mode, force_backend=cfg.clip.force_backend,
+        )
 
     summary = AnalyzeSummary(backend=detector.info)
     if face is not None:
         summary.backend += f" | {face.info}"
+    if clip is not None:
+        summary.backend += f" | {clip.info}"
     where = "" if force else " WHERE id IN (SELECT video_id FROM segments WHERE analyzed_at IS NULL)"
     rows = conn.execute(f"SELECT id FROM videos{where} ORDER BY start_ts").fetchall()
 
     for row in rows:
-        result = analyze_video(conn, int(row["id"]), detector, cfg, force=force, face=face)
+        result = analyze_video(
+            conn, int(row["id"]), detector, cfg, force=force, face=face, clip=clip
+        )
         summary.results.append(result)
         if on_result:
             on_result(result)

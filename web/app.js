@@ -8,6 +8,8 @@ const state = {
   timeline: null,
   segments: [],
   selected: null,
+  // Search results replace the day's segments in the filmstrip while active.
+  results: null,
 };
 
 const pad = (n) => String(n).padStart(2, "0");
@@ -130,15 +132,24 @@ function renderHours() {
 
 function renderFilmstrip() {
   const strip = $("filmstrip");
-  if (!state.segments.length) {
-    strip.innerHTML = '<div class="empty">No activity indexed for this day.</div>';
+  const showing = state.results || state.segments;
+
+  if (!showing.length) {
+    strip.innerHTML = state.results
+      ? '<div class="empty">Nothing matched that search.</div>'
+      : '<div class="empty">No activity indexed for this day.</div>';
     return;
   }
 
-  strip.innerHTML = state.segments
+  strip.innerHTML = showing
     .map((s) => {
       const on = state.selected && state.selected.id === s.id ? " selected" : "";
-      const dim = matchesFilter(s) ? "" : " dimmed";
+      const dim = state.results || matchesFilter(s) ? "" : " dimmed";
+      let why = "";
+      if (s.sources) {
+        const sim = s.semantic_score != null ? `<b>${s.semantic_score.toFixed(3)}</b>` : "";
+        why = `<span class="why">${sim}<span>${s.sources.join(" + ")}</span></span>`;
+      }
       const labels = labelsOf(s);
       let tags = "";
       if (labels) {
@@ -157,13 +168,15 @@ function renderFilmstrip() {
           <span class="time">${clockOf(s.ts_start)}</span>
           <span class="sub">${hms(s.ts_end - s.ts_start)} &middot; ${(s.activity_score * 100).toFixed(1)}%</span>
           ${tags}
+          ${why}
         </span>
       </button>`;
     })
     .join("");
 
   strip.querySelectorAll(".card").forEach((el) => {
-    el.onclick = () => selectSegment(state.segments.find((s) => s.id === Number(el.dataset.id)));
+    el.onclick = () =>
+      selectSegment(showing.find((s) => s.id === Number(el.dataset.id)));
   });
 }
 
@@ -247,6 +260,55 @@ function jumpToFraction(frac) {
   selectSegment(best);
 }
 
+/* ---------- search ---------- */
+
+async function runSearch() {
+  const text = $("q").value.trim();
+  if (!text) return clearSearch();
+
+  const query = new URLSearchParams({ q: text, limit: "60" });
+  if (state.cameraId) query.set("camera_id", state.cameraId);
+
+  $("search-note").textContent = "searching\u2026";
+  const body = await api(`/api/search?${query}`);
+
+  // Reshape hits into the segment shape the filmstrip already renders.
+  state.results = body.results.map((r) => ({
+    id: r.segment_id,
+    video_id: r.video_id,
+    camera_id: r.camera_id,
+    t_start: r.t_start,
+    t_end: r.t_end,
+    ts_start: r.ts_start,
+    ts_end: r.ts_end,
+    activity_score: 0,
+    labels: r.labels,
+    analyzed_at: 1,
+    n_tracklets: r.tracklet_id ? 1 : 0,
+    sources: r.sources,
+    semantic_score: r.semantic_score,
+  }));
+
+  state.selected = null;
+  $("objects").innerHTML = "";
+  $("search-clear").hidden = false;
+  $("search-note").textContent = body.semantic
+    ? `${body.n} result${body.n === 1 ? "" : "s"}`
+    : `${body.n} result${body.n === 1 ? "" : "s"} \u2014 word matching only, no CLIP models`;
+
+  renderFilmstrip();
+  drawTimeline();
+}
+
+function clearSearch() {
+  state.results = null;
+  $("q").value = "";
+  $("search-clear").hidden = true;
+  $("search-note").textContent = "";
+  renderFilmstrip();
+  drawTimeline();
+}
+
 /* ---------- loading ---------- */
 
 async function loadLabels() {
@@ -281,6 +343,8 @@ async function loadDay() {
   state.timeline = await api(`/api/timeline?${query}`);
   state.segments = state.timeline.segments;
   state.selected = null;
+  state.results = null;
+  $("search-clear").hidden = true;
   $("objects").innerHTML = "";
   await loadLabels();
   renderFilmstrip();
@@ -330,6 +394,13 @@ async function boot() {
     state.day = e.target.value;
     await loadDay();
   };
+  $("search-go").onclick = runSearch;
+  $("search-clear").onclick = clearSearch;
+  $("q").onkeydown = (e) => {
+    if (e.key === "Enter") runSearch();
+    if (e.key === "Escape") clearSearch();
+  };
+
   $("label").onchange = (e) => {
     state.label = e.target.value;
     renderFilmstrip();

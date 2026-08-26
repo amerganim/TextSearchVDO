@@ -8,9 +8,10 @@ later phases (tracklets, identities, zones, captions, embeddings) attach to
 from __future__ import annotations
 
 import sqlite3
+import threading
 from pathlib import Path
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_info (
@@ -157,6 +158,26 @@ CREATE TABLE IF NOT EXISTS tracklet_embeddings (
     PRIMARY KEY (tracklet_id, kind)
 );
 
+-- Phase 3. A CLIP vector per segment, from its peak frame: scene-level
+-- meaning, for queries like "a car in the driveway".
+CREATE TABLE IF NOT EXISTS segment_embeddings (
+    segment_id  INTEGER NOT NULL REFERENCES segments(id) ON DELETE CASCADE,
+    kind        TEXT NOT NULL,
+    dim         INTEGER NOT NULL,
+    vector      BLOB NOT NULL,
+    PRIMARY KEY (segment_id, kind)
+);
+
+-- Lexical half of retrieval. One row per segment, holding everything already
+-- known about it in words: object labels, who was there, which zones it
+-- touched. Semantic search finds things that look right; this finds things
+-- that are named right, and the two fail in different places.
+CREATE VIRTUAL TABLE IF NOT EXISTS segment_text USING fts5(
+    body,
+    segment_id UNINDEXED,
+    tokenize = 'porter unicode61'
+);
+
 CREATE INDEX IF NOT EXISTS idx_segments_ts ON segments(ts_start, ts_end);
 CREATE INDEX IF NOT EXISTS idx_identity_emb ON identity_embeddings(identity_id, kind);
 CREATE INDEX IF NOT EXISTS idx_zones_camera ON zones(camera_id);
@@ -224,6 +245,63 @@ def open_db(db_path: Path) -> sqlite3.Connection:
     conn = connect(db_path)
     init(conn)
     return conn
+
+
+class ThreadLocalConnection:
+    """A connection facade handing each thread its own SQLite handle.
+
+    FastAPI runs synchronous endpoints in a worker threadpool, so a page that
+    asks for several thumbnails at once hits the database from several threads
+    at the same moment. A single `sqlite3.Connection` is not safe for that even
+    with `check_same_thread=False`: that flag only silences the ownership
+    check, and concurrent `execute()` calls on one handle raise
+    `InterfaceError: bad parameter or other API misuse`.
+
+    One handle per thread avoids it outright, and WAL mode means the readers
+    do not block each other.
+    """
+
+    def __init__(self, db_path: Path) -> None:
+        self._path = db_path
+        self._local = threading.local()
+        # Initialise the schema once, on the connection that opened the file.
+        init(self._handle())
+
+    def _handle(self) -> sqlite3.Connection:
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = connect(self._path)
+            self._local.conn = conn
+        return conn
+
+    def execute(self, *args, **kwargs) -> sqlite3.Cursor:
+        return self._handle().execute(*args, **kwargs)
+
+    def executemany(self, *args, **kwargs) -> sqlite3.Cursor:
+        return self._handle().executemany(*args, **kwargs)
+
+    def executescript(self, *args, **kwargs) -> sqlite3.Cursor:
+        return self._handle().executescript(*args, **kwargs)
+
+    def cursor(self) -> sqlite3.Cursor:
+        return self._handle().cursor()
+
+    def commit(self) -> None:
+        self._handle().commit()
+
+    def rollback(self) -> None:
+        self._handle().rollback()
+
+    def close(self) -> None:
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            conn.close()
+            self._local.conn = None
+
+
+def open_threadlocal(db_path: Path) -> ThreadLocalConnection:
+    """A database handle safe to share with a threaded server."""
+    return ThreadLocalConnection(db_path)
 
 
 def get_or_create_camera(conn: sqlite3.Connection, name: str, tz: str = "UTC") -> int:

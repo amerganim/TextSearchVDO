@@ -22,6 +22,8 @@ from tsv.events import create_zone, delete_zone, list_zones, recompute_events
 from tsv.identity import (
     assign_identities, delete_identity, enroll_tracklet, list_identities,
 )
+from tsv.models.clip import build_clip
+from tsv.search import SearchFilters, rebuild_text_index, search as run_search
 
 
 class EnrollIn(BaseModel):
@@ -80,7 +82,23 @@ def _spread(
 
 def create_app(cfg: Config = DEFAULT) -> FastAPI:
     app = FastAPI(title="TextSearchVDO", version="0.1.0")
-    conn: sqlite3.Connection = db.open_db(cfg.db_path)
+    # One handle per worker thread; see db.ThreadLocalConnection.
+    conn = db.open_threadlocal(cfg.db_path)
+
+    # The text encoder is loaded once, lazily: it is only needed when someone
+    # actually types something, and loading it costs a second or two.
+    text_encoder: dict[str, object] = {}
+
+    def _query_vector(text: str):
+        if not text.strip() or not cfg.has_clip_models:
+            return None
+        if "clip" not in text_encoder:
+            text_encoder["clip"] = build_clip(
+                cfg.model_dir, cfg.clip.image_file, cfg.clip.text_file,
+                crop_mode=cfg.clip.crop_mode, force_backend=cfg.clip.force_backend,
+            )
+        clip = text_encoder["clip"]
+        return clip.embed_text(text) if clip is not None else None
 
     def _camera_filter(camera_id: int | None) -> tuple[str, list]:
         return ("AND camera_id = ?", [camera_id]) if camera_id else ("", [])
@@ -130,6 +148,10 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
             "n_named": conn.execute(
                 "SELECT COUNT(*) AS n FROM tracklets WHERE identity_id IS NOT NULL"
             ).fetchone()["n"],
+            "n_embedded": conn.execute(
+                "SELECT COUNT(*) AS n FROM segment_embeddings WHERE kind = 'clip'"
+            ).fetchone()["n"],
+            "semantic_ready": cfg.has_clip_models,
             "duration": duration,
             "active_seconds": active,
             "reduction": (1.0 - active / duration) if duration else 0.0,
@@ -296,6 +318,56 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
             [*params, limit, offset],
         ).fetchall()
         return [dict(r) for r in rows]
+
+    @app.get("/api/search")
+    def search_endpoint(
+        q: str = "",
+        day: str | None = None,
+        camera_id: int | None = None,
+        identity: str | None = None,
+        zone: str | None = None,
+        label: str | None = None,
+        event_kind: str | None = None,
+        semantic: bool = True,
+        min_similarity: float | None = None,
+        limit: int = Query(40, le=200),
+    ) -> dict:
+        """Search by text, by filters, or by both."""
+        if day:
+            try:
+                date.fromisoformat(day)
+            except ValueError:
+                raise HTTPException(400, "day must be YYYY-MM-DD") from None
+
+        filters = SearchFilters(
+            day=day, camera_id=camera_id, identity=identity,
+            zone=zone, label=label, event_kind=event_kind,
+        )
+        vector = _query_vector(q) if semantic else None
+        hits = run_search(conn, text=q, query_vector=vector, filters=filters,
+                          limit=limit, min_similarity=min_similarity)
+
+        return {
+            "query": q,
+            "semantic": vector is not None,
+            "n": len(hits),
+            "results": [
+                {
+                    "segment_id": h.segment_id, "score": h.score,
+                    "ts_start": h.ts_start, "ts_end": h.ts_end,
+                    "video_id": h.video_id, "camera_id": h.camera_id,
+                    "t_start": h.t_start, "t_end": h.t_end,
+                    "labels": h.labels, "sources": h.sources,
+                    "semantic_score": h.semantic_score,
+                    "tracklet_id": h.best_tracklet_id,
+                }
+                for h in hits
+            ],
+        }
+
+    @app.post("/api/search/reindex")
+    def reindex() -> dict:
+        return {"indexed": rebuild_text_index(conn)}
 
     @app.get("/api/identities")
     def identities() -> list[dict]:

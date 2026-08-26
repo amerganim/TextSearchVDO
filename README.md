@@ -21,6 +21,10 @@ trajectory into a crossing with a direction and a timestamp; naming a person
 once lets matching name them everywhere else. *When did Rafi cross the front
 door* is now a query.
 
+**Phase 3 (working):** search by text. CLIP embeddings over frames and object
+crops, a word index over everything the earlier phases learned, and structured
+filters, fused into one ranked answer.
+
 ## Architecture
 
 The design is **index → retrieve → verify**, not summarise-then-search. A
@@ -36,8 +40,8 @@ should ever see a frame a cheap filter could have discarded:
 Stage 0  Motion segmentation                        <- done
 Stage 1  Detection + tracking (YOLO / ByteTrack)    <- done
 Stage 2  Identity (face) and user-drawn zones       <- done
-Stage 3  Frame embeddings, VLM captions on person crops, audio ASR
-Stage 4  Hybrid retrieval + local LLM answers with timestamps
+Stage 3  CLIP embeddings + hybrid retrieval         <- done
+Stage 4  VLM captions, audio ASR, LLM answers
 ```
 
 Stage 0 itself is two tiers:
@@ -112,9 +116,17 @@ kernels than computing, and loses outright:
 | yolo11n @640 | 33 ms | 45 ms | iGPU wins |
 | SCRFD det_500m @640 | 54 ms | 24 ms | CPU wins |
 | ArcFace mbf @112 | 24 ms | 9 ms | CPU wins |
+| CLIP image @224 | 82 ms | 51 ms | CPU wins |
+| CLIP text @77 tok | 34 ms | 36 ms | a wash |
 
-So the detector runs on the iGPU while the face stack runs on the CPU, in the
-same pass, chosen per model.
+It is not about model size — CLIP's image encoder is the largest graph here
+and still loses on the iGPU. Only a sustained, convolution-heavy workload
+keeps that GPU busy enough to pay back the cost of getting data to it.
+Compile time compounds it: the iGPU takes 4–6 seconds to compile a graph the
+CPU loads in half a second, which a user feels directly on their first search.
+
+So the detector runs on the iGPU while the face and CLIP stacks run on the
+CPU, in the same pass, chosen per model.
 
 Two things came out of measuring rather than assuming. OpenVINO's CPU path
 *loses* to ONNX Runtime's, so it sits last in the preference order rather than
@@ -166,6 +178,46 @@ person. Alignment is not optional - measured on a real photograph, the *same*
 face scores 0.99 against itself when warped onto ArcFace's landmark template
 and only 0.68 from a plain box crop, while two different people score 0.00.
 
+## Stage 3: search
+
+Three signals, kept separate because they fail in different places.
+
+**Semantic** (CLIP) finds what *looks* like the query - clothing, posture,
+scene. It cannot tell you a person's name. **Lexical** (FTS5) finds what is
+*named* like the query - an object class, an enrolled person, a drawn zone -
+exact where it applies and silent where it does not. **Structured** filters
+(a person, a zone, a day, a camera) are not ranked at all: they are
+constraints, and that is what makes *when did Rafi go out the front door*
+exact rather than merely likely.
+
+The two ranked signals are fused with reciprocal rank fusion rather than by
+adding scores. A cosine similarity and a BM25 score share no scale, and
+normalising them needs recalibrating whenever either model changes; RRF reads
+only the ordering.
+
+Both scene frames and object crops are embedded. A person in a red jacket is a
+property of the crop, not of the whole frame, so searching scene vectors alone
+misses exactly the queries this is for.
+
+The tokenizer is pure Python rather than a dependency, and its equivalence is
+proven rather than assumed: the export dumps the reference vocabulary and
+reference token ids, and the tests assert an exact match on both.
+
+A query that matches nothing returns nothing. It never falls back to browsing,
+which would answer a different question than the one asked.
+
+```bash
+python -m tsv search "a person carrying a box" --limit 10
+```
+
+```bash
+python -m tsv search --who Rafi --zone "front door"
+```
+
+Absolute CLIP scores are not calibrated, so there is no default similarity
+floor - `--min-similarity` exists and the score is always shown, so a useful
+floor can be picked by looking at real numbers rather than guessed here.
+
 ## Usage
 
 ```bash
@@ -182,6 +234,10 @@ python -m tsv zones add --camera ch01 --name "front door" --kind line --points 0
 
 ```bash
 python -m tsv people name --tracklet 1 --name "Rafi" && python -m tsv people assign
+```
+
+```bash
+python -m tsv search "someone at the front door" --reindex
 ```
 
 ```bash
@@ -204,6 +260,17 @@ py -3.14 -m venv .venv-export && .venv-export/Scripts/python -m pip install ultr
 ```bash
 .venv-export/Scripts/python tools/export_model.py --out data/models
 ```
+
+For semantic search, from the same environment:
+
+```bash
+.venv-export/Scripts/python -m pip install transformers && .venv-export/Scripts/python tools/export_clip.py --out data/models
+```
+
+That writes both CLIP encoders (~600 MB as fp32; quantising is an obvious
+future win), the BPE merge table so the runtime can tokenise without
+transformers, and the reference vocabulary and token ids the tests check
+against.
 
 For face recognition, from the same environment:
 
@@ -289,7 +356,11 @@ tune, in roughly this order:
    On clean frontal faces the separation is enormous (0.998 against 0.034 in
    testing), but CCTV faces are small, angled and often lit by IR, and that
    margin will shrink.
-7. **Detection thresholds and sample rate.** `DetectConfig.detect_fps` trades
+7. **Search relevance.** CLIP similarity is not calibrated in absolute terms:
+   in testing a matching query scored 0.22–0.27 and an unrelated one 0.15, but
+   that gap moves with the camera and with how the query is phrased. Pick
+   `--min-similarity` from real numbers.
+8. **Detection thresholds and sample rate.** `DetectConfig.detect_fps` trades
    cost against tracking stability linearly, and `decode_width` decides whether
    distant figures survive at all. Both want real footage to settle.
 
@@ -315,6 +386,9 @@ tsv/models/face.py       SCRFD + ArcFace, alignment
 tsv/zones.py             zone geometry, crossings, dwell
 tsv/events.py            event derivation, no video access
 tsv/identity.py          gallery, matching, enrolment
+tsv/models/clip.py       CLIP image/text encoders
+tsv/models/tokenizer.py  CLIP byte-level BPE, pure Python
+tsv/search.py            filters, lexical, semantic, rank fusion
 tsv/api.py               FastAPI: timeline, segments, objects, ranged media
 tsv/config.py            every tunable, grouped by stage
 web/                     timeline UI

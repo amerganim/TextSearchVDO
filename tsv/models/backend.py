@@ -42,23 +42,35 @@ DEFAULT_PREFERENCE: tuple[tuple[str, str], ...] = (
     ("openvino", "CPU"),      # only reached if onnxruntime is missing entirely
 )
 
-# The best backend is a property of the *model*, not just the machine. On a
-# small graph the iGPU spends more time moving data and launching kernels than
-# computing, and loses to plain CPU. Measured on the baseline machine:
+# The best backend is a property of the *model*, not just the machine.
+# Measured per forward pass on the baseline machine (i5-1235U, Intel UHD):
 #
-#     yolo11n     640px    iGPU  33 ms   CPU  45 ms    -> iGPU wins
-#     SCRFD 500m  640px    iGPU  54 ms   CPU  24 ms    -> CPU wins
-#     ArcFace mbf 112px    iGPU  24 ms   CPU   9 ms    -> CPU wins
+#     yolo11n      640px   iGPU  33 ms   CPU  45 ms   -> iGPU wins
+#     SCRFD 500m   640px   iGPU  54 ms   CPU  24 ms   -> CPU wins
+#     ArcFace mbf  112px   iGPU  24 ms   CPU   9 ms   -> CPU wins
+#     CLIP image   224px   iGPU  82 ms   CPU  51 ms   -> CPU wins
+#     CLIP text     77tok  iGPU  34 ms   CPU  36 ms   -> a wash
 #
-# A discrete GPU has enough headroom that it still wins on small graphs, so it
-# stays ahead; only the integrated one is demoted.
-SMALL_MODEL_PREFERENCE: tuple[tuple[str, str], ...] = (
+# The pattern is not model size - CLIP's image encoder is by far the largest
+# graph here and still loses on the iGPU. It is that only a sustained,
+# convolution-heavy workload keeps that GPU busy enough to pay back the cost
+# of getting data to it; everything else is dominated by transfer and launch
+# overhead. Compile time compounds it: the iGPU takes 4-6 seconds to compile a
+# graph the CPU loads in half a second, which a user feels directly on their
+# first search.
+#
+# A discrete GPU has the headroom to win in all these cases, so it stays first;
+# only the integrated one is demoted.
+CPU_FIRST_PREFERENCE: tuple[tuple[str, str], ...] = (
     ("onnxruntime", "CUDA"),
     ("onnxruntime", "CPU"),
     ("openvino", "GPU"),
     ("onnxruntime", "DML"),
     ("openvino", "CPU"),
 )
+
+# Kept as the old name so nothing that imported it breaks.
+SMALL_MODEL_PREFERENCE = CPU_FIRST_PREFERENCE
 
 
 @dataclass

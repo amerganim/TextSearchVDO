@@ -333,3 +333,43 @@ input[type="text"]:focus, select:focus { outline: 2px solid var(--accent); outli
 .event-row:hover { border-color: var(--accent); }
 .event-row .when { color: var(--muted); font-variant-numeric: tabular-nums; }
 .event-row .kind { margin-left: auto; color: var(--accent); }
+
+
+/* ---------- search ---------- */
+
+.searchbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 20px 0;
+  flex-wrap: wrap;
+}
+
+.searchbar input[type="search"] {
+  flex: 1 1 340px;
+  min-width: 0;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px 12px;
+  font: inherit;
+}
+
+.searchbar input[type="search"]:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.search-note { color: var(--muted); font-size: 12px; }
+
+.card .why {
+  display: flex;
+  gap: 5px;
+  align-items: baseline;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.card .why b { color: var(--accent); font-weight: 600; }

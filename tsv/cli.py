@@ -279,6 +279,52 @@ def cmd_people(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_search(args: argparse.Namespace) -> int:
+    from datetime import datetime as _dt
+
+    from tsv.models.clip import build_clip
+    from tsv.search import SearchFilters, rebuild_text_index, search
+
+    cfg = _config(args)
+    conn = db.open_db(cfg.db_path)
+
+    if args.reindex:
+        print(f"indexed {rebuild_text_index(conn)} segments")
+
+    vector = None
+    if args.query and not args.no_semantic:
+        clip = build_clip(
+            cfg.model_dir, cfg.clip.image_file, cfg.clip.text_file,
+            crop_mode=cfg.clip.crop_mode, force_backend=cfg.clip.force_backend,
+        )
+        if clip is None:
+            print("(no CLIP models; falling back to word matching alone)")
+        else:
+            vector = clip.embed_text(args.query)
+
+    filters = SearchFilters(
+        day=args.day, identity=args.who, zone=args.zone,
+        label=args.label, event_kind=args.event,
+    )
+    hits = search(conn, text=args.query or "", query_vector=vector,
+                  filters=filters, limit=args.limit,
+                  min_similarity=args.min_similarity)
+
+    if not hits:
+        print("nothing matched.")
+        return 0
+
+    for hit in hits:
+        when = _dt.fromtimestamp(hit.ts_start).strftime("%Y-%m-%d %H:%M:%S")
+        labels = ""
+        if hit.labels:
+            import json as _json
+            labels = " ".join(f"{n}x{k}" for k, n in _json.loads(hit.labels).items())
+        sim = f"{hit.semantic_score:+.3f}" if hit.semantic_score is not None else "  -   "
+        print(f"  {when}  sim={sim}  {labels:<22} [{'+'.join(hit.sources)}]")
+    return 0
+
+
 def cmd_stats(args: argparse.Namespace) -> int:
     cfg = _config(args)
     conn = db.open_db(cfg.db_path)
@@ -405,6 +451,22 @@ def main(argv: list[str] | None = None) -> int:
     pp_assign.add_argument("--reassign", action="store_true",
                            help="revisit automatic labels (manual ones are never touched)")
     pp_assign.set_defaults(func=cmd_people)
+
+    p_search = sub.add_parser("search", help="find moments by text and filters")
+    p_search.add_argument("query", nargs="?", default="")
+    p_search.add_argument("--day")
+    p_search.add_argument("--who", help="only segments containing this person")
+    p_search.add_argument("--zone", help="only segments touching this zone")
+    p_search.add_argument("--label", help="only segments containing this object class")
+    p_search.add_argument("--event", help="only segments with this event kind")
+    p_search.add_argument("--limit", type=int, default=20)
+    p_search.add_argument("--reindex", action="store_true",
+                          help="rebuild the word index first")
+    p_search.add_argument("--min-similarity", type=float, default=None,
+                          help="discard semantic matches below this cosine score")
+    p_search.add_argument("--no-semantic", action="store_true",
+                          help="word matching only, no CLIP")
+    p_search.set_defaults(func=cmd_search)
 
     p_stats = sub.add_parser("stats", help="what is in the index")
     p_stats.set_defaults(func=cmd_stats)
