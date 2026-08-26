@@ -15,11 +15,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import av
 import cv2
 import numpy as np
 
 from tsv.config import TierBConfig
+from tsv.frames import sample_windows
 
 
 @dataclass
@@ -61,11 +61,6 @@ class _Scorer:
         self.prev_luma: float | None = None
 
     def start_window(self) -> None:
-        """Each candidate window is scored from a fresh background model.
-
-        Windows can be hours apart, so carrying a model between them would
-        score the scene against a background that no longer exists.
-        """
         self._reset()
 
     def score(self, gray: np.ndarray) -> tuple[float, bool]:
@@ -118,47 +113,26 @@ def trace_windows(
     if not windows:
         return trace
 
-    with av.open(str(path)) as container:
-        stream = container.streams.video[0]
-        stream.thread_type = "AUTO"
-        time_base = stream.time_base
-        if time_base is None:
-            return trace
-
-        src_w = stream.codec_context.width or cfg.width
-        src_h = stream.codec_context.height or cfg.width
-        out_w = min(cfg.width, src_w)
-        out_h = max(2, int(round(src_h * out_w / src_w)))
-        out_h -= out_h % 2
-        scorer = _Scorer(cfg, out_w * out_h)
-        period = 1.0 / cfg.sample_fps
-
-        for start, end in windows:
+    scorer: _Scorer | None = None
+    for sample in sample_windows(
+        path, windows, cfg.sample_fps, width=cfg.width, pixel_format="gray"
+    ):
+        gray = sample.frame
+        if scorer is None:
+            scorer = _Scorer(cfg, gray.shape[0] * gray.shape[1])
+        if sample.window_start:
+            # Windows can be hours apart, so each starts from a fresh
+            # background model rather than one built on a scene that no
+            # longer exists.
             scorer.start_window()
-            # Seek lands on the keyframe at or before `start`; decoded frames
-            # before the window are still fed to the model (free warmup) but
-            # are not scored.
-            container.seek(int(start / time_base), stream=stream, backward=True)
-            next_sample = start
 
-            for frame in container.decode(stream):
-                if frame.pts is None:
-                    continue
-                t = float(frame.pts * time_base)
-                if t > end:
-                    break
-                trace.frames_decoded += 1
-                if t < next_sample:
-                    continue
-                next_sample = t + period
-
-                gray = frame.reformat(width=out_w, height=out_h, format="gray").to_ndarray()
-                score, flipped = scorer.score(gray)
-                if flipped:
-                    trace.ir_flips.append(t)
-                trace.times.append(t)
-                trace.scores.append(score)
-                trace.frames_scored += 1
+        score, flipped = scorer.score(gray)
+        if flipped:
+            trace.ir_flips.append(sample.t)
+        trace.times.append(sample.t)
+        trace.scores.append(score)
+        trace.frames_scored += 1
+    trace.frames_decoded = trace.frames_scored
 
     order = np.argsort(np.asarray(trace.times), kind="stable")
     trace.times = [trace.times[i] for i in order]

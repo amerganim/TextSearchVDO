@@ -88,9 +88,33 @@ class SegmentConfig:
 
 
 @dataclass(frozen=True)
+class DetectConfig:
+    """Phase 1: what to run the detector on, and how hard."""
+
+    model_file: str = "yolo11n.onnx"
+    input_size: int = 640
+    # Frames per second sampled for detection. Higher costs linearly and buys
+    # tracking stability; 4 keeps a walking person's boxes overlapping enough
+    # to associate while staying affordable on a CPU.
+    detect_fps: float = 4.0
+    # Frames are decoded at this width before letterboxing. Decoding 1080p to
+    # feed a 640px network is wasted bandwidth, but going too small loses the
+    # distant figures that matter most on a wide camera.
+    decode_width: int = 960
+    conf_threshold: float = 0.25
+    iou_threshold: float = 0.45
+    # None means the CCTV subset in models.detect; an explicit tuple overrides.
+    classes: tuple[str, ...] | None = None
+    # "runtime:device" to pin a backend, e.g. "onnxruntime:CPU". None selects.
+    force_backend: str | None = None
+    crop_width: int = 160
+
+
+@dataclass(frozen=True)
 class Config:
     data_dir: Path = Path("data")
     tier_a: TierAConfig = field(default_factory=TierAConfig)
+    detect: DetectConfig = field(default_factory=DetectConfig)
     tier_b: TierBConfig = field(default_factory=TierBConfig)
     segments: SegmentConfig = field(default_factory=SegmentConfig)
     thumb_width: int = 320
@@ -103,6 +127,18 @@ class Config:
     @property
     def thumb_dir(self) -> Path:
         return self.data_dir / "thumbs"
+
+    @property
+    def crop_dir(self) -> Path:
+        return self.data_dir / "crops"
+
+    @property
+    def model_dir(self) -> Path:
+        return self.data_dir / "models"
+
+    @property
+    def detect_model_path(self) -> Path:
+        return self.model_dir / self.detect.model_file
 
 
 DEFAULT = Config()

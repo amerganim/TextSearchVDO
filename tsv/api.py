@@ -89,15 +89,27 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
                       COALESCE(SUM(active_seconds), 0) AS active
                FROM videos"""
         ).fetchone()
-        n_segments = conn.execute("SELECT COUNT(*) AS n FROM segments").fetchone()["n"]
+        counts = conn.execute(
+            """SELECT COUNT(*) AS n_segments,
+                      SUM(CASE WHEN analyzed_at IS NOT NULL THEN 1 ELSE 0 END) AS n_analyzed
+               FROM segments"""
+        ).fetchone()
+        n_tracklets = conn.execute("SELECT COUNT(*) AS n FROM tracklets").fetchone()["n"]
+        top = conn.execute(
+            """SELECT label, COUNT(*) AS n FROM tracklets
+               GROUP BY label ORDER BY n DESC LIMIT 8"""
+        ).fetchall()
         duration = float(row["duration"])
         active = float(row["active"])
         return {
             "n_videos": row["n_videos"],
-            "n_segments": n_segments,
+            "n_segments": counts["n_segments"],
+            "n_analyzed": counts["n_analyzed"] or 0,
+            "n_tracklets": n_tracklets,
             "duration": duration,
             "active_seconds": active,
             "reduction": (1.0 - active / duration) if duration else 0.0,
+            "top_labels": [dict(r) for r in top],
         }
 
     @app.get("/api/cameras")
@@ -139,7 +151,8 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
 
         seg_rows = conn.execute(
             f"""SELECT id, video_id, camera_id, t_start, t_end, ts_start, ts_end,
-                       activity_score, peak_offset, thumb_path
+                       activity_score, peak_offset, thumb_path, labels, n_tracklets,
+                       analyzed_at
                 FROM segments
                 WHERE ts_end > ? AND ts_start < ? {where}
                 ORDER BY ts_start""",
@@ -193,6 +206,78 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
             [*params, limit, offset],
         ).fetchall()
         return [dict(r) for r in rows]
+
+    @app.get("/api/labels")
+    def labels(day: str | None = None, camera_id: int | None = None) -> list[dict]:
+        """Which object kinds appear, and how often. Drives the UI filter."""
+        where, params = _camera_filter(camera_id)
+        time_clause = ""
+        if day:
+            try:
+                start, end = _day_bounds(date.fromisoformat(day))
+            except ValueError:
+                raise HTTPException(400, "day must be YYYY-MM-DD") from None
+            time_clause = "AND ts_end > ? AND ts_start < ?"
+            params = [*params, start, end]
+        rows = conn.execute(
+            f"""SELECT label, COUNT(*) AS n FROM tracklets
+                WHERE 1=1 {where} {time_clause}
+                GROUP BY label ORDER BY n DESC""",
+            params,
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    @app.get("/api/objects")
+    def objects(
+        day: str | None = None,
+        label: str | None = None,
+        camera_id: int | None = None,
+        min_score: float = 0.0,
+        limit: int = Query(300, le=2000),
+        offset: int = 0,
+    ) -> list[dict]:
+        """Tracked objects, newest-first within the day, for the object view."""
+        clauses: list[str] = []
+        params: list = []
+        if camera_id:
+            clauses.append("AND t.camera_id = ?")
+            params.append(camera_id)
+        if day:
+            try:
+                start, end = _day_bounds(date.fromisoformat(day))
+            except ValueError:
+                raise HTTPException(400, "day must be YYYY-MM-DD") from None
+            clauses.append("AND t.ts_end > ? AND t.ts_start < ?")
+            params += [start, end]
+        if label:
+            clauses.append("AND t.label = ?")
+            params.append(label)
+        if min_score > 0:
+            clauses.append("AND t.max_score >= ?")
+            params.append(min_score)
+
+        rows = conn.execute(
+            f"""SELECT t.*, s.t_start AS segment_start, v.path
+                FROM tracklets t
+                JOIN segments s ON s.id = t.segment_id
+                JOIN videos v ON v.id = t.video_id
+                WHERE 1=1 {" ".join(clauses)}
+                ORDER BY t.ts_start LIMIT ? OFFSET ?""",
+            [*params, limit, offset],
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    @app.get("/api/crop/{tracklet_id}")
+    def crop(tracklet_id: int) -> FileResponse:
+        row = conn.execute(
+            "SELECT thumb_path FROM tracklets WHERE id = ?", (tracklet_id,)
+        ).fetchone()
+        if row is None or not row["thumb_path"]:
+            raise HTTPException(404)
+        path = Path(row["thumb_path"])
+        if not path.is_file():
+            raise HTTPException(404)
+        return FileResponse(path, media_type="image/jpeg")
 
     @app.get("/api/thumb/{segment_id}")
     def thumb(segment_id: int) -> FileResponse:
