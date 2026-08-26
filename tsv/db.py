@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_info (
@@ -125,7 +125,40 @@ CREATE TABLE IF NOT EXISTS events (
     duration    REAL NOT NULL DEFAULT 0
 );
 
+-- Phase 2 identity. A person the user has named.
+CREATE TABLE IF NOT EXISTS identities (
+    id          INTEGER PRIMARY KEY,
+    name        TEXT NOT NULL UNIQUE,
+    notes       TEXT,
+    created_at  REAL
+);
+
+-- The gallery: embeddings the user has confirmed belong to an identity.
+-- `kind` separates face vectors from body/appearance ones; they live in
+-- different spaces and must never be compared to each other.
+CREATE TABLE IF NOT EXISTS identity_embeddings (
+    id          INTEGER PRIMARY KEY,
+    identity_id INTEGER NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+    tracklet_id INTEGER REFERENCES tracklets(id) ON DELETE SET NULL,
+    kind        TEXT NOT NULL,
+    dim         INTEGER NOT NULL,
+    vector      BLOB NOT NULL,
+    created_at  REAL
+);
+
+-- One aggregated embedding per tracklet per kind, so matching does not have
+-- to re-read every detection.
+CREATE TABLE IF NOT EXISTS tracklet_embeddings (
+    tracklet_id INTEGER NOT NULL REFERENCES tracklets(id) ON DELETE CASCADE,
+    kind        TEXT NOT NULL,
+    dim         INTEGER NOT NULL,
+    vector      BLOB NOT NULL,
+    n_samples   INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (tracklet_id, kind)
+);
+
 CREATE INDEX IF NOT EXISTS idx_segments_ts ON segments(ts_start, ts_end);
+CREATE INDEX IF NOT EXISTS idx_identity_emb ON identity_embeddings(identity_id, kind);
 CREATE INDEX IF NOT EXISTS idx_zones_camera ON zones(camera_id);
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
 CREATE INDEX IF NOT EXISTS idx_events_zone ON events(zone_id, ts);
@@ -171,6 +204,13 @@ def init(conn: sqlite3.Connection) -> None:
     ensure_column(conn, "segments", "analyzed_at", "REAL")
     ensure_column(conn, "segments", "n_tracklets", "INTEGER")
     ensure_column(conn, "segments", "labels", "TEXT")
+
+    # Who this tracklet is, once identity has run. Kept on the tracklet rather
+    # than in a join table because a tracklet is one continuous sighting of
+    # one object - it cannot be two people.
+    ensure_column(conn, "tracklets", "identity_id", "INTEGER REFERENCES identities(id)")
+    ensure_column(conn, "tracklets", "identity_score", "REAL")
+    ensure_column(conn, "tracklets", "identity_source", "TEXT")
 
     row = conn.execute("SELECT version FROM schema_info").fetchone()
     if row is None:

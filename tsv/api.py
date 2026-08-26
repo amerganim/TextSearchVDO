@@ -19,6 +19,14 @@ from pydantic import BaseModel, Field
 from tsv import db
 from tsv.config import DEFAULT, Config
 from tsv.events import create_zone, delete_zone, list_zones, recompute_events
+from tsv.identity import (
+    assign_identities, delete_identity, enroll_tracklet, list_identities,
+)
+
+
+class EnrollIn(BaseModel):
+    tracklet_id: int
+    name: str = Field(min_length=1, max_length=64)
 
 
 class ZoneIn(BaseModel):
@@ -116,6 +124,12 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
             "n_segments": counts["n_segments"],
             "n_analyzed": counts["n_analyzed"] or 0,
             "n_tracklets": n_tracklets,
+            "n_identities": conn.execute(
+                "SELECT COUNT(*) AS n FROM identities"
+            ).fetchone()["n"],
+            "n_named": conn.execute(
+                "SELECT COUNT(*) AS n FROM tracklets WHERE identity_id IS NOT NULL"
+            ).fetchone()["n"],
             "duration": duration,
             "active_seconds": active,
             "reduction": (1.0 - active / duration) if duration else 0.0,
@@ -271,15 +285,63 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
             params.append(min_score)
 
         rows = conn.execute(
-            f"""SELECT t.*, s.t_start AS segment_start, v.path
+            f"""SELECT t.*, s.t_start AS segment_start, v.path,
+                       i.name AS identity_name
                 FROM tracklets t
                 JOIN segments s ON s.id = t.segment_id
                 JOIN videos v ON v.id = t.video_id
+                LEFT JOIN identities i ON i.id = t.identity_id
                 WHERE 1=1 {" ".join(clauses)}
                 ORDER BY t.ts_start LIMIT ? OFFSET ?""",
             [*params, limit, offset],
         ).fetchall()
         return [dict(r) for r in rows]
+
+    @app.get("/api/identities")
+    def identities() -> list[dict]:
+        return list_identities(conn)
+
+    @app.post("/api/identities/enroll")
+    def enroll(body: EnrollIn) -> dict:
+        exists = conn.execute(
+            "SELECT id FROM tracklets WHERE id = ?", (body.tracklet_id,)
+        ).fetchone()
+        if exists is None:
+            raise HTTPException(404, "no such tracklet")
+        try:
+            identity, added = enroll_tracklet(conn, body.tracklet_id, body.name)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
+        return {
+            "identity_id": identity.id, "name": identity.name,
+            "examples_added": added,
+            # Zero means the tracklet had no embedding yet - the sighting is
+            # still labelled, but it teaches the gallery nothing.
+            "note": "" if added else "no embeddings stored for this tracklet yet",
+        }
+
+    @app.delete("/api/identities/{identity_id}")
+    def remove_identity(identity_id: int) -> dict:
+        if not delete_identity(conn, identity_id):
+            raise HTTPException(404)
+        return {"deleted": identity_id}
+
+    @app.post("/api/identities/assign")
+    def assign(
+        kind: str = Query("face", pattern="^(face|body)$"),
+        threshold: float | None = None,
+        margin: float | None = None,
+        reassign: bool = False,
+    ) -> dict:
+        summary = assign_identities(conn, kind, threshold, margin, reassign)
+        return {
+            "kind": kind,
+            "considered": summary.n_considered,
+            "assigned": summary.n_assigned,
+            "ambiguous": summary.n_ambiguous,
+            "below_threshold": summary.n_below_threshold,
+            "by_name": summary.by_name,
+        }
 
     @app.get("/api/zones")
     def zones(camera_id: int | None = None) -> list[dict]:
@@ -329,11 +391,15 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
         kind: str | None = None,
         label: str | None = None,
         camera_id: int | None = None,
+        identity: str | None = None,
         limit: int = Query(300, le=2000),
         offset: int = 0,
     ) -> list[dict]:
         clauses: list[str] = []
         params: list = []
+        if identity:
+            clauses.append("AND i.name = ?")
+            params.append(identity)
         for column, value in (
             ("e.zone_id", zone_id), ("e.kind", kind),
             ("e.label", label), ("e.camera_id", camera_id),
@@ -351,11 +417,13 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
 
         rows = conn.execute(
             f"""SELECT e.*, z.name AS zone_name, t.thumb_path IS NOT NULL AS has_crop,
-                       s.t_start AS segment_start
+                       s.t_start AS segment_start, i.name AS identity_name,
+                       t.identity_score
                 FROM events e
                 JOIN zones z ON z.id = e.zone_id
                 JOIN tracklets t ON t.id = e.tracklet_id
                 JOIN segments s ON s.id = e.segment_id
+                LEFT JOIN identities i ON i.id = t.identity_id
                 WHERE 1=1 {" ".join(clauses)}
                 ORDER BY e.ts LIMIT ? OFFSET ?""",
             [*params, limit, offset],

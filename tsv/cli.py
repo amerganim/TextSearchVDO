@@ -227,6 +227,54 @@ def cmd_events(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_people(args: argparse.Namespace) -> int:
+    """Name people, and let matching name the rest."""
+    from tsv.identity import (
+        assign_identities, delete_identity, enroll_tracklet, list_identities,
+    )
+
+    cfg = _config(args)
+    conn = db.open_db(cfg.db_path)
+
+    if args.people_command == "name":
+        exists = conn.execute(
+            "SELECT id FROM tracklets WHERE id = ?", (args.tracklet,)
+        ).fetchone()
+        if exists is None:
+            print(f"no tracklet with id {args.tracklet}")
+            return 1
+        identity, added = enroll_tracklet(conn, args.tracklet, args.name)
+        print(f"tracklet {args.tracklet} is {identity.name}")
+        if not added:
+            print("  note: no embeddings stored yet, so this teaches the gallery nothing")
+        return 0
+
+    if args.people_command == "forget":
+        print("forgotten" if delete_identity(conn, args.id) else f"no identity {args.id}")
+        return 0
+
+    if args.people_command == "assign":
+        summary = assign_identities(
+            conn, args.kind, args.threshold, args.margin, reassign=args.reassign
+        )
+        named = ", ".join(f"{n} x {name}" for name, n in sorted(summary.by_name.items()))
+        print(f"considered {summary.n_considered} tracklets")
+        print(f"  named        {summary.n_assigned}" + (f"  ({named})" if named else ""))
+        print(f"  too close    {summary.n_ambiguous}")
+        print(f"  no match     {summary.n_below_threshold}")
+        return 0
+
+    people = list_identities(conn)
+    if not people:
+        print("nobody enrolled yet. Name a tracklet with:")
+        print("  python -m tsv people name --tracklet 42 --name 'Rafi'")
+        return 0
+    for person in people:
+        print(f"  [{person['id']}] {person['name']:<20} "
+              f"{person['n_examples']:>3} examples  {person['n_sightings']:>5} sightings")
+    return 0
+
+
 def cmd_stats(args: argparse.Namespace) -> int:
     cfg = _config(args)
     conn = db.open_db(cfg.db_path)
@@ -250,6 +298,19 @@ def cmd_stats(args: argparse.Namespace) -> int:
     ).fetchall()
     if objects:
         print("objects   " + ", ".join(f"{r['n']} {r['label']}" for r in objects))
+
+    people = conn.execute(
+        """SELECT i.name, COUNT(t.id) n FROM identities i
+           LEFT JOIN tracklets t ON t.identity_id = i.id
+           GROUP BY i.id ORDER BY n DESC"""
+    ).fetchall()
+    if people:
+        print("people    " + ", ".join(f"{r['name']} ({r['n']})" for r in people))
+
+    n_events = conn.execute("SELECT COUNT(*) n FROM events").fetchone()["n"]
+    n_zones = conn.execute("SELECT COUNT(*) n FROM zones").fetchone()["n"]
+    if n_zones:
+        print(f"zones     {n_zones} defined, {n_events} events")
     print()
     for cam in conn.execute(
         """SELECT c.name, COUNT(v.id) n, COALESCE(SUM(v.duration),0) d
@@ -317,6 +378,27 @@ def main(argv: list[str] | None = None) -> int:
     p_events.add_argument("--label")
     p_events.add_argument("--limit", type=int, default=50)
     p_events.set_defaults(func=cmd_events)
+
+    p_people = sub.add_parser("people", help="name people and assign identities")
+    p_people.set_defaults(func=cmd_people, people_command="list")
+    people_sub = p_people.add_subparsers(dest="people_command")
+
+    pp_name = people_sub.add_parser("name", help="name a tracklet, teaching the gallery")
+    pp_name.add_argument("--tracklet", type=int, required=True)
+    pp_name.add_argument("--name", required=True)
+    pp_name.set_defaults(func=cmd_people)
+
+    pp_forget = people_sub.add_parser("forget", help="remove an identity by id")
+    pp_forget.add_argument("id", type=int)
+    pp_forget.set_defaults(func=cmd_people)
+
+    pp_assign = people_sub.add_parser("assign", help="name tracklets that match the gallery")
+    pp_assign.add_argument("--kind", choices=["face", "body"], default="face")
+    pp_assign.add_argument("--threshold", type=float)
+    pp_assign.add_argument("--margin", type=float)
+    pp_assign.add_argument("--reassign", action="store_true",
+                           help="revisit automatic labels (manual ones are never touched)")
+    pp_assign.set_defaults(func=cmd_people)
 
     p_stats = sub.add_parser("stats", help="what is in the index")
     p_stats.set_defaults(func=cmd_stats)

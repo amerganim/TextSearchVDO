@@ -282,3 +282,97 @@ def test_a_still_frame_is_served_for_drawing_on(zone_client):
 
 def test_a_frame_for_an_unknown_camera_is_404(zone_client):
     assert zone_client.get("/api/frame/9999").status_code == 404
+
+
+# ---------- Phase 2: identity ----------
+
+
+def _first_tracklet(client: TestClient) -> int:
+    return client.get("/api/objects").json()[0]["id"]
+
+
+def test_enrolling_names_a_tracklet(zone_client):
+    tracklet_id = _first_tracklet(zone_client)
+    response = zone_client.post("/api/identities/enroll",
+                                json={"tracklet_id": tracklet_id, "name": "Rafi"})
+    assert response.status_code == 200
+    assert response.json()["name"] == "Rafi"
+
+    people = zone_client.get("/api/identities").json()
+    assert people[0]["name"] == "Rafi"
+    assert people[0]["n_sightings"] == 1
+
+
+def test_enrolling_a_tracklet_with_no_embedding_says_so(zone_client):
+    """The sighting is still labelled; it just teaches the gallery nothing."""
+    body = zone_client.post("/api/identities/enroll",
+                            json={"tracklet_id": _first_tracklet(zone_client),
+                                  "name": "Rafi"}).json()
+    assert body["examples_added"] == 0
+    assert "no embeddings" in body["note"]
+
+
+def test_enrolling_an_unknown_tracklet_is_404(zone_client):
+    response = zone_client.post("/api/identities/enroll",
+                                json={"tracklet_id": 999999, "name": "Nobody"})
+    assert response.status_code == 404
+
+
+def test_enrolling_without_a_name_is_rejected(zone_client):
+    response = zone_client.post("/api/identities/enroll",
+                                json={"tracklet_id": _first_tracklet(zone_client), "name": ""})
+    assert response.status_code == 422
+
+
+def test_objects_carry_the_identity_name(zone_client):
+    tracklet_id = _first_tracklet(zone_client)
+    zone_client.post("/api/identities/enroll", json={"tracklet_id": tracklet_id, "name": "Rafi"})
+
+    named = [o for o in zone_client.get("/api/objects").json() if o["id"] == tracklet_id][0]
+    assert named["identity_name"] == "Rafi"
+
+
+def test_events_carry_the_identity_and_can_be_filtered_by_it(zone_client):
+    """The point of the whole phase: "when did Rafi cross the front door"."""
+    _add_line(zone_client, "front door")
+    events = zone_client.get("/api/events").json()
+    assert events
+    tracklet_id = events[0]["tracklet_id"]
+    zone_client.post("/api/identities/enroll", json={"tracklet_id": tracklet_id, "name": "Rafi"})
+
+    named = zone_client.get("/api/events?identity=Rafi").json()
+    assert named
+    assert all(e["identity_name"] == "Rafi" for e in named)
+    assert zone_client.get("/api/events?identity=Nobody").json() == []
+
+
+def test_deleting_an_identity_unnames_its_sightings(zone_client):
+    tracklet_id = _first_tracklet(zone_client)
+    identity_id = zone_client.post(
+        "/api/identities/enroll", json={"tracklet_id": tracklet_id, "name": "Rafi"}
+    ).json()["identity_id"]
+
+    assert zone_client.delete(f"/api/identities/{identity_id}").status_code == 200
+    assert zone_client.get("/api/identities").json() == []
+    named = [o for o in zone_client.get("/api/objects").json() if o["id"] == tracklet_id][0]
+    assert named["identity_name"] is None
+    assert zone_client.delete(f"/api/identities/{identity_id}").status_code == 404
+
+
+def test_assign_reports_its_decisions(zone_client):
+    body = zone_client.post("/api/identities/assign?kind=face").json()
+    assert body["kind"] == "face"
+    assert body["assigned"] == 0          # nothing enrolled with embeddings yet
+    assert "ambiguous" in body
+
+
+def test_assign_rejects_an_unknown_kind(zone_client):
+    assert zone_client.post("/api/identities/assign?kind=vibes").status_code == 422
+
+
+def test_summary_counts_identities(zone_client):
+    zone_client.post("/api/identities/enroll",
+                     json={"tracklet_id": _first_tracklet(zone_client), "name": "Rafi"})
+    body = zone_client.get("/api/summary").json()
+    assert body["n_identities"] == 1
+    assert body["n_named"] == 1
