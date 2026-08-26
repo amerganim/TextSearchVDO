@@ -42,6 +42,24 @@ DEFAULT_PREFERENCE: tuple[tuple[str, str], ...] = (
     ("openvino", "CPU"),      # only reached if onnxruntime is missing entirely
 )
 
+# The best backend is a property of the *model*, not just the machine. On a
+# small graph the iGPU spends more time moving data and launching kernels than
+# computing, and loses to plain CPU. Measured on the baseline machine:
+#
+#     yolo11n     640px    iGPU  33 ms   CPU  45 ms    -> iGPU wins
+#     SCRFD 500m  640px    iGPU  54 ms   CPU  24 ms    -> CPU wins
+#     ArcFace mbf 112px    iGPU  24 ms   CPU   9 ms    -> CPU wins
+#
+# A discrete GPU has enough headroom that it still wins on small graphs, so it
+# stays ahead; only the integrated one is demoted.
+SMALL_MODEL_PREFERENCE: tuple[tuple[str, str], ...] = (
+    ("onnxruntime", "CUDA"),
+    ("onnxruntime", "CPU"),
+    ("openvino", "GPU"),
+    ("onnxruntime", "DML"),
+    ("openvino", "CPU"),
+)
+
 
 @dataclass
 class BackendInfo:

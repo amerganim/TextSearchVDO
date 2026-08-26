@@ -95,3 +95,72 @@ def test_detections_from_noise_are_not_wildly_out_of_frame():
         assert 0 <= det.x1 <= det.x2 <= 1280
         assert 0 <= det.y1 <= det.y2 <= 720
         assert det.cls < len(COCO_CLASSES)
+
+
+# ---------- face models ----------
+
+FACE_DET = DEFAULT.face_detector_path
+FACE_EMB = DEFAULT.face_embedder_path
+have_face = FACE_DET.is_file() and FACE_EMB.is_file()
+
+face_only = pytest.mark.skipif(not have_face, reason="no face models exported")
+
+
+@pytest.fixture(scope="module")
+def face_pipeline():
+    from tsv.models.face import ArcFaceEmbedder, FacePipeline, SCRFDDetector
+
+    return FacePipeline(
+        SCRFDDetector(FACE_DET, conf_threshold=0.4, force_backend="onnxruntime:CPU"),
+        ArcFaceEmbedder(FACE_EMB, force_backend="onnxruntime:CPU"),
+    )
+
+
+@face_only
+def test_scrfd_returns_landmarks(face_pipeline):
+    """Without the keypoint head there is no alignment, and no recognition."""
+    rng = np.random.default_rng(0)
+    frame = rng.integers(0, 255, (480, 640, 3), dtype=np.uint8)
+    for face in face_pipeline.detector.detect(frame):
+        assert face.landmarks is not None
+        assert face.landmarks.shape == (5, 2)
+
+
+@face_only
+def test_detections_stay_inside_the_frame(face_pipeline):
+    rng = np.random.default_rng(1)
+    frame = rng.integers(0, 255, (720, 1280, 3), dtype=np.uint8)
+    for face in face_pipeline.detector.detect(frame):
+        assert 0 <= face.x1 <= face.x2 <= 1280
+        assert 0 <= face.y1 <= face.y2 <= 720
+
+
+@face_only
+def test_arcface_emits_a_unit_vector_of_the_expected_width(face_pipeline):
+    import numpy as _np
+
+    rng = _np.random.default_rng(2)
+    aligned = rng.integers(0, 255, (112, 112, 3), dtype=_np.uint8)
+    vector = face_pipeline.embedder.embed_aligned(aligned)
+    assert vector.shape == (512,)
+    assert abs(float(_np.linalg.norm(vector)) - 1.0) < 1e-4
+
+
+@face_only
+def test_the_same_input_embeds_identically(face_pipeline):
+    """Sanity: the pipeline is deterministic, so similarity is meaningful."""
+    import numpy as _np
+
+    rng = _np.random.default_rng(3)
+    aligned = rng.integers(0, 255, (112, 112, 3), dtype=_np.uint8)
+    a = face_pipeline.embedder.embed_aligned(aligned)
+    b = face_pipeline.embedder.embed_aligned(aligned)
+    assert float(a @ b) > 0.9999
+
+
+@face_only
+def test_best_face_ignores_faces_below_the_size_floor(face_pipeline):
+    """A confident twelve-pixel face carries no identity information."""
+    rng = np.random.default_rng(4)
+    frame = rng.integers(0, 255, (240, 320, 3), dtype=np.uint8)
+    assert face_pipeline.best_face_in(frame, min_size=10_000) is None

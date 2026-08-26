@@ -18,7 +18,11 @@ def _hms(seconds: float) -> str:
 
 
 def _config(args: argparse.Namespace) -> Config:
-    return dataclasses.replace(DEFAULT, data_dir=Path(args.data_dir))
+    return dataclasses.replace(
+        DEFAULT,
+        data_dir=Path(args.data_dir),
+        model_dir_override=Path(args.model_dir) if args.model_dir else None,
+    )
 
 
 def _print_result(result: IngestResult) -> None:
@@ -335,6 +339,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="tsv", description=__doc__)
     parser.add_argument("--data-dir", default=str(DEFAULT.data_dir))
+    parser.add_argument("--model-dir", default=None,
+                        help="where the ONNX models live (default: <data-dir>/models)")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_ingest = sub.add_parser("ingest", help="index a video file or folder")

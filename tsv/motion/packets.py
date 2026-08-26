@@ -139,6 +139,29 @@ def _grow_regions(high: np.ndarray, low: np.ndarray) -> np.ndarray:
     return out
 
 
+def _idle_level(values: np.ndarray, cfg: TierAConfig) -> tuple[float, float]:
+    """Estimate the idle level and its spread from a set of bins.
+
+    A low quantile, not the median. Motion only ever *increases* a P-frame's
+    size, so the idle floor lives at the bottom of the distribution. The
+    median is only a good estimate of it when activity is a small minority,
+    and that assumption breaks exactly where it matters: short NVR files where
+    someone is on screen for half the clip, which then set a baseline above
+    their own idle level and hide the activity that raised it.
+
+    The spread is measured against the lower half alone, for the same reason.
+    """
+    if values.size == 0:
+        return 0.0, 1.0
+    baseline = float(np.quantile(values, cfg.idle_quantile))
+    lower = values[values <= np.median(values)]
+    if lower.size == 0:
+        lower = values
+    mad = float(np.median(np.abs(lower - baseline)))
+    spread = max(1.4826 * mad, cfg.min_rel_mad * baseline)
+    return baseline, spread
+
+
 def _local_baseline(
     bins: np.ndarray, valid: np.ndarray, cfg: TierAConfig
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -150,14 +173,16 @@ def _local_baseline(
     """
     n = bins.size
     block = max(1, int(cfg.baseline_window_seconds / cfg.bin_seconds))
+    # Always get at least three blocks, however short the clip. Plenty of NVRs
+    # write one-minute files, and with a single block there is no local
+    # structure to exploit and no neighbour to sanity-check against.
+    block = min(block, max(1, n // 3))
     n_blocks = (n + block - 1) // block
 
     if n_blocks < 3:
         populated = bins[valid]
-        median = float(np.median(populated))
-        mad = float(np.median(np.abs(populated - median)))
-        spread = max(1.4826 * mad, cfg.min_rel_mad * median)
-        return np.full(n, median), np.full(n, spread)
+        level = _idle_level(populated, cfg)
+        return np.full(n, level[0]), np.full(n, level[1])
 
     centres = np.empty(n_blocks)
     medians = np.empty(n_blocks)
@@ -170,8 +195,7 @@ def _local_baseline(
             medians[i] = np.nan
             mads[i] = np.nan
             continue
-        medians[i] = np.median(chunk)
-        mads[i] = np.median(np.abs(chunk - medians[i]))
+        medians[i], mads[i] = _idle_level(chunk, cfg)
 
     # Blocks with no data borrow from their neighbours.
     if np.isnan(medians).any():
@@ -194,7 +218,7 @@ def _local_baseline(
 
     index = np.arange(n, dtype=np.float64)
     baseline = np.interp(index, centres, medians)
-    spread = np.interp(index, centres, 1.4826 * mads)
+    spread = np.interp(index, centres, mads)
     return baseline, np.maximum(spread, cfg.min_rel_mad * baseline)
 
 

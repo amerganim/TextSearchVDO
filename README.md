@@ -16,6 +16,11 @@ discrete GPU** — roughly 10 minutes to trawl a 24-hour day.
 timeline can say *two people and a dog* rather than *something moved*. Runs
 only over what Phase 0 kept.
 
+**Phase 2 (working):** zones and identity. A door line drawn once turns a
+trajectory into a crossing with a direction and a timestamp; naming a person
+once lets matching name them everywhere else. *When did Rafi cross the front
+door* is now a query.
+
 ## Architecture
 
 The design is **index → retrieve → verify**, not summarise-then-search. A
@@ -30,7 +35,7 @@ should ever see a frame a cheap filter could have discarded:
 ```
 Stage 0  Motion segmentation                        <- done
 Stage 1  Detection + tracking (YOLO / ByteTrack)    <- done
-Stage 2  Identity (face + re-ID) and user-drawn zones
+Stage 2  Identity (face) and user-drawn zones       <- done
 Stage 3  Frame embeddings, VLM captions on person crops, audio ASR
 Stage 4  Hybrid retrieval + local LLM answers with timestamps
 ```
@@ -54,10 +59,14 @@ have to be removed first, and both were found the hard way:
   silently losing whatever happened there. All-intra is detected **per bin**,
   not per file, and blind bins are passed to Tier B untriaged.
 
-The baseline is a rolling median/MAD, not a global one: a camera's noise floor
-changes hugely across a recording (IR cutover, rain, auto-exposure), and one
-global baseline lets the noisier half hide its own activity behind a threshold
-set by the quieter half.
+The baseline is rolling, not global: a camera's noise floor changes hugely
+across a recording (IR cutover, rain, auto-exposure), and one global baseline
+lets the noisier half hide its own activity behind a threshold set by the
+quieter half. It is also taken at a **low quantile rather than the median**,
+because motion only ever pushes bins upward — on a short file where someone is
+on screen half the time, the median sits inside the activity and hides exactly
+what raised it. Plenty of NVRs write one-minute files, so that case is normal
+rather than exotic.
 
 Tier A is tuned for **recall over precision** — a false candidate costs decode
 time, a miss is unrecoverable.
@@ -94,6 +103,19 @@ Measured on the baseline machine (i5-1235U, Intel UHD graphics), yolo11n at
 | `onnxruntime:CPU` | 45 ms | |
 | `openvino:CPU` | 53 ms | |
 
+The best backend turns out to be a property of the **model**, not just the
+machine. On a small graph the iGPU spends longer moving data and launching
+kernels than computing, and loses outright:
+
+| model | iGPU | CPU | |
+|---|---:|---:|---|
+| yolo11n @640 | 33 ms | 45 ms | iGPU wins |
+| SCRFD det_500m @640 | 54 ms | 24 ms | CPU wins |
+| ArcFace mbf @112 | 24 ms | 9 ms | CPU wins |
+
+So the detector runs on the iGPU while the face stack runs on the CPU, in the
+same pass, chosen per model.
+
 Two things came out of measuring rather than assuming. OpenVINO's CPU path
 *loses* to ONNX Runtime's, so it sits last in the preference order rather than
 ahead of it on the strength of being Intel's own runtime. And OpenVINO must be
@@ -112,6 +134,38 @@ Association runs per class, and the second pass over low-confidence detections
 is what keeps someone walking behind furniture as one tracklet instead of
 three.
 
+## Stage 2: zones and identity
+
+**Zones.** A *line* counts crossings and their direction; a *region* counts
+entries and how long someone stayed. Two geometry decisions carry the feature:
+the anchor is the **bottom centre** of a box rather than its centre, because a
+person is where their feet are and the centre puts someone "in the kitchen"
+while they are still leaning through the doorway; and crossings are tested on
+the **segment between consecutive samples** rather than by watching which side
+a point is on, because at a few frames a second there is usually no sample on
+the line at all.
+
+Events are derived from stored detections and **never touch video**. Zones get
+redrawn constantly, and moving a door line two pixels must not mean re-running
+the detector over a week of footage.
+
+**Identity.** SCRFD finds faces, ArcFace embeds them, and naming one tracklet
+puts its vector in a gallery that names the rest. Three rules keep it from
+confidently mislabelling people:
+
+- a **margin**, not just a threshold - two similar people both scoring just
+  over the line is exactly when to say "I don't know";
+- **best score per identity**, so someone with twenty enrolled examples cannot
+  out-rank a better match by having more chances;
+- matching **never feeds its own output back** into the gallery, and never
+  overwrites a manual label.
+
+Faces are embedded from the best few crops of each tracklet, not every frame:
+the face stack would otherwise cost more than the detector that found the
+person. Alignment is not optional - measured on a real photograph, the *same*
+face scores 0.99 against itself when warped onto ArcFace's landmark template
+and only 0.68 from a plain box crop, while two different people score 0.00.
+
 ## Usage
 
 ```bash
@@ -120,6 +174,14 @@ python -m tsv ingest /path/to/footage
 
 ```bash
 python -m tsv analyze
+```
+
+```bash
+python -m tsv zones add --camera ch01 --name "front door" --kind line --points 0.5,0.0 0.5,1.0
+```
+
+```bash
+python -m tsv people name --tracklet 1 --name "Rafi" && python -m tsv people assign
 ```
 
 ```bash
@@ -142,6 +204,17 @@ py -3.14 -m venv .venv-export && .venv-export/Scripts/python -m pip install ultr
 ```bash
 .venv-export/Scripts/python tools/export_model.py --out data/models
 ```
+
+For face recognition, from the same environment:
+
+```bash
+.venv-export/Scripts/python -m pip install insightface && .venv-export/Scripts/python tools/fetch_face_models.py --out data/models
+```
+
+That fetches SCRFD and ArcFace as plain ONNX (~16 MB for the small pack).
+insightface is used only to download and unpack; nothing imports it at
+runtime. Face models are optional - everything through Phase 1 works without
+them.
 
 The export venv can be deleted afterwards; only `data/models/yolo11n.onnx`
 (~10 MB) is needed to run. Two export flags are not the default everywhere and
@@ -205,7 +278,18 @@ tune, in roughly this order:
    `videos.ts_source` before trusting a timeline.
 4. **Clock sync across cameras**, before it silently corrupts cross-camera
    reasoning in later phases.
-5. **Detection thresholds and sample rate.** `DetectConfig.detect_fps` trades
+5. **Noisy scenes weaken Tier A.** The packet-size signal is *relative*, so
+   heavy sensor noise shrinks it. On a deliberately noisy test clip the gap
+   between idle and active fell to about 3 sigma with the two populations
+   touching - no threshold could have separated them. The baseline is taken at
+   a low quantile rather than the median for the related reason that motion
+   only ever pushes bins upward, so on a short file where someone is on screen
+   half the time the median sits inside the activity and hides it.
+6. **Identity thresholds.** `DEFAULT_THRESHOLDS` in `identity.py` are guesses.
+   On clean frontal faces the separation is enormous (0.998 against 0.034 in
+   testing), but CCTV faces are small, angled and often lit by IR, and that
+   margin will shrink.
+7. **Detection thresholds and sample rate.** `DetectConfig.detect_fps` trades
    cost against tracking stability linearly, and `decode_width` decides whether
    distant figures survive at all. Both want real footage to settle.
 
@@ -227,6 +311,10 @@ tsv/track/bytetrack.py   two-stage association
 tsv/track/kalman.py      constant-velocity motion model
 tsv/boxes.py             box geometry, IoU, class-aware NMS
 tsv/analyze.py           Phase 1 orchestration
+tsv/models/face.py       SCRFD + ArcFace, alignment
+tsv/zones.py             zone geometry, crossings, dwell
+tsv/events.py            event derivation, no video access
+tsv/identity.py          gallery, matching, enrolment
 tsv/api.py               FastAPI: timeline, segments, objects, ranged media
 tsv/config.py            every tunable, grouped by stage
 web/                     timeline UI

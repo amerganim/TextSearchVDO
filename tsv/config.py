@@ -39,6 +39,10 @@ class TierAConfig:
     # one-second resolution. Tier A only has to decide *whether* to decode a
     # stretch, so trading that resolution away costs nothing.
     smooth_bins: int = 3
+    # Quantile of the bin distribution taken as the idle floor. Not the
+    # median: motion only pushes bins upward, so on a clip where someone is on
+    # screen half the time the median sits inside the activity and hides it.
+    idle_quantile: float = 0.30
     # Candidate windows are padded before being handed to Tier B, so segment
     # edges are found by the accurate stage rather than the cheap one.
     pad_seconds: float = 2.0
@@ -111,10 +115,35 @@ class DetectConfig:
 
 
 @dataclass(frozen=True)
+class FaceConfig:
+    """Phase 2: who a person is."""
+
+    detector_file: str = "det_500m.onnx"
+    embedder_file: str = "w600k_mbf.onnx"
+    det_size: int = 640
+    conf_threshold: float = 0.5
+    # A face smaller than this carries almost no identity information; a
+    # confident twelve-pixel face is still worthless.
+    min_face_px: int = 24
+    # Faces are embedded from the best few crops of each tracklet rather than
+    # every sampled frame. Running the face stack per frame would cost more
+    # than the detector that found the person in the first place, and the
+    # extra views add little once the best ones are in hand.
+    max_faces_per_tracklet: int = 5
+    # These graphs are small enough that an integrated GPU loses to the CPU;
+    # see SMALL_MODEL_PREFERENCE in models/backend.py.
+    force_backend: str | None = None
+
+
+@dataclass(frozen=True)
 class Config:
     data_dir: Path = Path("data")
+    # Models are shared between indexes rather than belonging to one, so this
+    # can point somewhere common; it defaults to <data_dir>/models.
+    model_dir_override: Path | None = None
     tier_a: TierAConfig = field(default_factory=TierAConfig)
     detect: DetectConfig = field(default_factory=DetectConfig)
+    face: FaceConfig = field(default_factory=FaceConfig)
     tier_b: TierBConfig = field(default_factory=TierBConfig)
     segments: SegmentConfig = field(default_factory=SegmentConfig)
     thumb_width: int = 320
@@ -134,11 +163,23 @@ class Config:
 
     @property
     def model_dir(self) -> Path:
-        return self.data_dir / "models"
+        return self.model_dir_override or (self.data_dir / "models")
 
     @property
     def detect_model_path(self) -> Path:
         return self.model_dir / self.detect.model_file
+
+    @property
+    def face_detector_path(self) -> Path:
+        return self.model_dir / self.face.detector_file
+
+    @property
+    def face_embedder_path(self) -> Path:
+        return self.model_dir / self.face.embedder_file
+
+    @property
+    def has_face_models(self) -> bool:
+        return self.face_detector_path.is_file() and self.face_embedder_path.is_file()
 
 
 DEFAULT = Config()

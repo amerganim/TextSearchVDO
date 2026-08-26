@@ -26,8 +26,14 @@ from PIL import Image
 
 from tsv.config import Config
 from tsv.frames import sample_windows
+from tsv.identity import aggregate, store_tracklet_embedding
 from tsv.models.detect import CCTV_CLASSES, COCO_CLASSES, Detector
+from tsv.models.face import FacePipeline
 from tsv.track.bytetrack import ByteTracker, Track, TrackerConfig
+
+# Faces are only looked for on people. A face detector run over a dog or a
+# parked car is pure cost.
+PERSON_CLASS = COCO_CLASSES.index("person")
 
 
 @dataclass
@@ -38,6 +44,7 @@ class AnalyzeResult:
     n_segments: int = 0
     n_tracklets: int = 0
     n_detections: int = 0
+    n_faces: int = 0
     frames: int = 0
     elapsed: float = 0.0
     labels: Counter = field(default_factory=Counter)
@@ -64,6 +71,10 @@ class AnalyzeSummary:
     @property
     def total_frames(self) -> int:
         return sum(r.frames for r in self.analyzed)
+
+    @property
+    def total_faces(self) -> int:
+        return sum(r.n_faces for r in self.analyzed)
 
     @property
     def labels(self) -> Counter:
@@ -93,6 +104,39 @@ def _crop_bytes(frame_rgb: np.ndarray, box: tuple[float, float, float, float], w
     return encoded.tobytes() if ok else None
 
 
+def _remember_face_crop(
+    face_crops: dict[int, list[tuple[float, np.ndarray]]],
+    track: Track,
+    frame_rgb: np.ndarray,
+    limit: int,
+) -> None:
+    """Keep the best few crops of a person for the face pass at flush time.
+
+    Bounded by detection score, so a tracklet that lasts two minutes costs the
+    same memory as one that lasts two seconds.
+    """
+    height, width = frame_rgb.shape[:2]
+    x1, y1, x2, y2 = track.observations[-1][1:]
+    # Faces sit above the box's centre and the detector often clips the top of
+    # the head, so pad upward more generously than sideways.
+    pad_x = (x2 - x1) * 0.10
+    pad_y = (y2 - y1) * 0.10
+    x1 = max(0, int(x1 - pad_x))
+    y1 = max(0, int(y1 - pad_y * 1.6))
+    x2 = min(width, int(x2 + pad_x))
+    y2 = min(height, int(y2 + pad_y))
+    if x2 - x1 < 16 or y2 - y1 < 16:
+        return
+
+    kept = face_crops.setdefault(track.track_id, [])
+    if len(kept) < limit:
+        kept.append((track.score, frame_rgb[y1:y2, x1:x2].copy()))
+        kept.sort(key=lambda pair: pair[0])
+    elif track.score > kept[0][0]:
+        kept[0] = (track.score, frame_rgb[y1:y2, x1:x2].copy())
+        kept.sort(key=lambda pair: pair[0])
+
+
 def _write_tracklets(
     conn: sqlite3.Connection,
     segment: sqlite3.Row,
@@ -103,9 +147,13 @@ def _write_tracklets(
     frame_h: int,
     crops: dict[int, bytes],
     crop_dir: Path,
-) -> tuple[int, int, Counter]:
+    face_crops: dict[int, list[tuple[float, np.ndarray]]] | None = None,
+    face: FacePipeline | None = None,
+    min_face_px: int = 24,
+) -> tuple[int, int, int, Counter]:
     labels: Counter = Counter()
     n_detections = 0
+    n_faces = 0
 
     for track in tracks:
         if not track.observations:
@@ -162,11 +210,26 @@ def _write_tracklets(
         )
         n_detections += len(track.observations)
 
+        if face is not None and face_crops and track.cls == PERSON_CLASS:
+            vectors = []
+            for _, crop in face_crops.get(track.track_id, []):
+                found = face.best_face_in(crop, min_size=min_face_px)
+                if found is not None:
+                    vectors.append(found[1])
+            if vectors:
+                # One vector per tracklet: the person is the same throughout,
+                # so averaging their views is strictly better evidence than
+                # any single frame, which may be a blink or a turn.
+                store_tracklet_embedding(
+                    conn, tracklet_id, "face", aggregate(vectors), n_samples=len(vectors)
+                )
+                n_faces += 1
+
     conn.execute(
         "UPDATE segments SET analyzed_at = ?, n_tracklets = ?, labels = ? WHERE id = ?",
         (time.time(), len(tracks), json.dumps(dict(labels)) if labels else None, segment["id"]),
     )
-    return len(tracks), n_detections, labels
+    return len(tracks), n_detections, n_faces, labels
 
 
 def analyze_video(
@@ -176,6 +239,7 @@ def analyze_video(
     cfg: Config,
     force: bool = False,
     tracker_config: TrackerConfig | None = None,
+    face: FacePipeline | None = None,
 ) -> AnalyzeResult:
     started = time.time()
     video = conn.execute("SELECT * FROM videos WHERE id = ?", (video_id,)).fetchone()
@@ -205,25 +269,29 @@ def analyze_video(
     sample_times: dict[int, float] = {}
     crops: dict[int, bytes] = {}
     best_score: dict[int, float] = {}
+    # The best few person crops per track, held for the face pass at flush.
+    face_crops: dict[int, list[tuple[float, np.ndarray]]] = {}
     current_window = 0
     frame_w = frame_h = 0
     frames = 0
-    n_tracklets = n_detections = 0
+    n_tracklets = n_detections = n_faces = 0
     labels: Counter = Counter()
 
     def flush(window_index: int) -> None:
-        nonlocal tracker, sample_times, crops, best_score
-        nonlocal n_tracklets, n_detections, labels
+        nonlocal tracker, sample_times, crops, best_score, face_crops
+        nonlocal n_tracklets, n_detections, n_faces, labels
         if frame_w and frame_h:
-            added, dets, found = _write_tracklets(
+            added, dets, faces_found, found = _write_tracklets(
                 conn, segments[window_index], video, tracker.close(),
                 sample_times, frame_w, frame_h, crops, cfg.crop_dir,
+                face_crops=face_crops, face=face, min_face_px=cfg.face.min_face_px,
             )
             n_tracklets += added
             n_detections += dets
+            n_faces += faces_found
             labels.update(found)
         tracker = ByteTracker(tracker_config)
-        sample_times, crops, best_score = {}, {}, {}
+        sample_times, crops, best_score, face_crops = {}, {}, {}, {}
 
     try:
         for sample in sample_windows(
@@ -264,6 +332,11 @@ def analyze_video(
                         best_score[track.track_id] = track.score
                         crops[track.track_id] = encoded
 
+                if face is not None and track.cls == PERSON_CLASS:
+                    _remember_face_crop(
+                        face_crops, track, sample.frame, cfg.face.max_faces_per_tracklet
+                    )
+
         flush(current_window)
     except Exception as exc:  # noqa: BLE001 - one bad file must not stop the run
         conn.rollback()
@@ -273,7 +346,28 @@ def analyze_video(
     return AnalyzeResult(
         video_id=video_id, path=path, status="analyzed",
         n_segments=len(segments), n_tracklets=n_tracklets, n_detections=n_detections,
-        frames=frames, elapsed=time.time() - started, labels=labels,
+        n_faces=n_faces, frames=frames, elapsed=time.time() - started, labels=labels,
+    )
+
+
+def build_face_pipeline(cfg: Config) -> FacePipeline | None:
+    """A face pipeline if the models are present, else None.
+
+    Face models are optional: everything up to Phase 1 works without them, and
+    a missing model should degrade the run rather than stop it.
+    """
+    if not cfg.has_face_models:
+        return None
+    from tsv.models.face import ArcFaceEmbedder, SCRFDDetector
+
+    return FacePipeline(
+        SCRFDDetector(
+            cfg.face_detector_path,
+            size=cfg.face.det_size,
+            conf_threshold=cfg.face.conf_threshold,
+            force_backend=cfg.face.force_backend,
+        ),
+        ArcFaceEmbedder(cfg.face_embedder_path, force_backend=cfg.face.force_backend),
     )
 
 
@@ -283,6 +377,8 @@ def analyze_all(
     force: bool = False,
     detector: Detector | None = None,
     on_result: Callable[[AnalyzeResult], None] | None = None,
+    face: FacePipeline | None = None,
+    with_faces: bool = True,
 ) -> AnalyzeSummary:
     classes = frozenset(cfg.detect.classes) if cfg.detect.classes else CCTV_CLASSES
     detector = detector or Detector(
@@ -293,13 +389,17 @@ def analyze_all(
         keep_classes=classes,
         force_backend=cfg.detect.force_backend,
     )
+    if face is None and with_faces:
+        face = build_face_pipeline(cfg)
 
     summary = AnalyzeSummary(backend=detector.info)
+    if face is not None:
+        summary.backend += f" | {face.info}"
     where = "" if force else " WHERE id IN (SELECT video_id FROM segments WHERE analyzed_at IS NULL)"
     rows = conn.execute(f"SELECT id FROM videos{where} ORDER BY start_ts").fetchall()
 
     for row in rows:
-        result = analyze_video(conn, int(row["id"]), detector, cfg, force=force)
+        result = analyze_video(conn, int(row["id"]), detector, cfg, force=force, face=face)
         summary.results.append(result)
         if on_result:
             on_result(result)
