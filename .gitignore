@@ -10,3 +10,8 @@ data/
 thumbs/
 footage/
 .venv-export/
+
+# Export and runtime artifacts that land in the repo root
+yolo11n.pt
+*.pt
+kernel.errors.txt
