@@ -18,6 +18,13 @@ const api = (path, options) => fetch(path, options).then((r) => r.json());
 
 const state = { poll: null, indexed: 0, importing: false };
 
+/** Captions come from a model, so they are text of unknown shape. */
+function escapeHtml(text) {
+  const div = document.createElement("div");
+  div.textContent = text;
+  return div.innerHTML;
+}
+
 const EXAMPLES = [
   "a person",
   "someone carrying something",
@@ -203,11 +210,18 @@ function renderHits(hits) {
         ? `${(h.semantic_score * 100).toFixed(0)}% match`
         : (h.sources || []).join(" + ");
 
+      // The description, where captioning has run. Without it a word match is
+      // unexplained: "bag" matched, but the reader cannot see what was said.
+      const said = h.caption
+        ? `<span class="said">${escapeHtml(h.caption)}</span>`
+        : "";
+
       return `<button class="hit" data-video="${h.video_id}" data-t="${h.t_start}" data-when="${when}">
         <img src="/api/thumb/${h.segment_id}" alt="">
         <span class="cap">
           <span class="when">${when}</span>
           <span class="sub">${objects || "movement"}</span>
+          ${said}
           <span class="why">${why}</span>
         </span>
       </button>`;

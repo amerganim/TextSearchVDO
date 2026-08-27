@@ -54,6 +54,10 @@ class SearchHit:
     sources: list[str] = field(default_factory=list)
     semantic_score: float | None = None
     best_tracklet_id: int | None = None
+    # What a caption said about this moment, where one exists. Carried so a
+    # result can explain itself: matching on the word "bag" is only
+    # intelligible if the sentence containing it is visible.
+    caption: str | None = None
 
 
 @dataclass
@@ -363,6 +367,12 @@ def search(
         if row is None:
             continue
         sem = semantic_by_id.get(segment_id)
+        caption_row = conn.execute(
+            """SELECT caption FROM tracklets
+               WHERE segment_id = ? AND caption IS NOT NULL
+               ORDER BY LENGTH(caption) DESC LIMIT 1""",
+            (segment_id,),
+        ).fetchone()
         hits.append(
             SearchHit(
                 segment_id=segment_id, score=score,
@@ -373,6 +383,7 @@ def search(
                 sources=sources,
                 semantic_score=sem[0] if sem else None,
                 best_tracklet_id=sem[1] if sem else None,
+                caption=caption_row["caption"] if caption_row else None,
             )
         )
     return hits

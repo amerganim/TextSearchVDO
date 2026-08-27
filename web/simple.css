@@ -274,6 +274,18 @@ a.link {
 .hit .when { font-variant-numeric: tabular-nums; font-size: 14px; }
 .hit .sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
 
+.hit .said {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #b7c2d4;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 .hit .why {
   display: inline-block;
   margin-top: 6px;

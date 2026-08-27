@@ -381,6 +381,7 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
                     "labels": h.labels, "sources": h.sources,
                     "semantic_score": h.semantic_score,
                     "tracklet_id": h.best_tracklet_id,
+                    "caption": h.caption,
                 }
                 for h in hits
             ],
@@ -486,6 +487,7 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
                 "labels": h.labels, "sources": h.sources,
                 "semantic_score": h.semantic_score,
                 "tracklet_id": h.best_tracklet_id,
+                "caption": h.caption,
             }
             for h in result.hits
         ]
