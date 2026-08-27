@@ -59,12 +59,38 @@ function notice(message, kind = "error") {
 }
 
 /** The search box is live whenever there is anything at all to search. */
-function refreshChrome() {
+function refreshChrome(summary) {
   const has = state.indexed > 0;
   $("searchbar").hidden = !has;
   $("examples").hidden = !has;
   $("stage-empty").hidden = has;
   $("q").disabled = false;
+
+  // "Describe people" says how much work it is, because it is the one slow
+  // thing in the app and starting it blind would be unkind.
+  const describe = $("describe");
+  if (!summary || !has) {
+    describe.hidden = true;
+    return;
+  }
+  const todo = summary.n_to_caption || 0;
+  const done = summary.n_captioned || 0;
+
+  if (!summary.caption_ready) {
+    describe.hidden = done === 0;
+    describe.textContent = "Descriptions unavailable";
+    describe.disabled = true;
+    describe.title = "The captioning model has not been fetched.";
+    return;
+  }
+  describe.hidden = false;
+  describe.disabled = state.importing || todo === 0;
+  describe.title = todo
+    ? `About ${Math.round((todo * 6) / 60) || 1} minute(s) of work`
+    : "Everyone in the index has been described";
+  describe.textContent = todo
+    ? `Describe people (${todo})`
+    : `Described ${done}`;
 }
 
 /* ---------- importing ---------- */
@@ -133,9 +159,15 @@ function hideStrip() {
   $("strip").hidden = true;
 }
 
-function watchJob(jobId) {
+/** What a running job should be called while it works. */
+function jobTitle(job) {
+  if (job.kind === "caption") return "Describing people";
+  return job.title ? `Reading ${job.title}` : "Working";
+}
+
+function watchJob(jobId, kind) {
   clearInterval(state.poll);
-  showStrip("Reading the video", 0.02, "");
+  showStrip(kind === "caption" ? "Describing people" : "Reading the video", 0.02, "");
 
   state.poll = setInterval(async () => {
     let job;
@@ -145,14 +177,13 @@ function watchJob(jobId) {
       return;                       // transient; keep polling
     }
     showStrip(
-      job.title ? `Reading ${job.title}` : "Working",
+      jobTitle(job),
       job.progress,
       [job.stage, job.message].filter(Boolean).join(" — "),
     );
 
     // Whatever has been read so far is already searchable.
-    await refreshLibrary();
-    refreshChrome();
+    refreshChrome(await refreshLibrary());
 
     if (job.status === "done") {
       clearInterval(state.poll);
@@ -165,8 +196,20 @@ function watchJob(jobId) {
       }
       if (r.tracklets) bits.push(`${r.tracklets} object(s) found`);
       if (r.skipped) bits.push(`${r.skipped} already indexed`);
-      notice(bits.join(" &middot; ") || "Ready.", "good");
+      if (job.kind === "caption") {
+        const described = r.captioned || 0;
+        notice(
+          described
+            ? `Described ${described} ${described === 1 ? "person" : "people"} &middot; `
+              + `now searchable by what they are doing`
+            : "Nothing new to describe.",
+          "good",
+        );
+      } else {
+        notice(bits.join(" &middot; ") || "Ready.", "good");
+      }
       if ((r.failed || []).length) notice(r.failed.join("; "));
+      refreshChrome(await refreshLibrary());
       $("q").focus();
     } else if (job.status === "failed") {
       clearInterval(state.poll);
@@ -340,6 +383,11 @@ async function boot() {
     if (e.key === "Enter") runSearch();
   };
   $("add").onclick = chooseFiles;
+  $("describe").onclick = async () => {
+    const body = await api("/api/caption", { method: "POST" });
+    if (body.detail) return notice(body.detail);
+    watchJob(body.id, "caption");
+  };
   $("choose").onclick = chooseFiles;
   $("filepick").onchange = (e) => {
     importFiles(e.target.files);
@@ -386,8 +434,7 @@ async function boot() {
     }
   });
 
-  await refreshLibrary();
-  refreshChrome();
+  refreshChrome(await refreshLibrary());
 
   const running = (await api("/api/jobs")).find(
     (j) => j.status === "running" || j.status === "queued"

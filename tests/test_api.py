@@ -491,3 +491,29 @@ def test_the_simple_app_is_served_at_the_root(zone_client):
     body = zone_client.get("/").text
     assert "Add a video to get started" in body or 'id="q"' in body
     assert zone_client.get("/advanced").status_code == 200
+
+
+# ---------- captioning from the app ----------
+
+
+def test_summary_reports_how_much_captioning_is_outstanding(zone_client):
+    """The button says how much work it is, so it must be countable."""
+    body = zone_client.get("/api/summary").json()
+    assert "caption_ready" in body
+    assert "n_captioned" in body
+    assert "n_to_caption" in body
+    # Nothing captioned yet, and the fixture has person tracklets.
+    assert body["n_captioned"] == 0
+    assert body["n_to_caption"] >= 1
+
+
+def test_captioning_without_the_model_explains_itself(zone_client, monkeypatch):
+    """A 400 with instructions beats a 500 with a traceback."""
+    import tsv.config
+
+    monkeypatch.setattr(
+        tsv.config.Config, "has_caption_model", property(lambda self: False)
+    )
+    response = zone_client.post("/api/caption")
+    assert response.status_code == 400
+    assert "fetch_caption_model" in response.json()["detail"]

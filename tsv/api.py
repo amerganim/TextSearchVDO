@@ -170,6 +170,18 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
                 "SELECT COUNT(*) AS n FROM segment_embeddings WHERE kind = 'clip'"
             ).fetchone()["n"],
             "semantic_ready": cfg.has_clip_models,
+            "caption_ready": cfg.has_caption_model,
+            "n_captioned": conn.execute(
+                "SELECT COUNT(*) AS n FROM tracklets WHERE caption IS NOT NULL"
+            ).fetchone()["n"],
+            # How much work a "describe people" run would be, so the button can
+            # say so rather than starting something of unknown length.
+            "n_to_caption": conn.execute(
+                "SELECT COUNT(*) AS n FROM tracklets "
+                "WHERE caption IS NULL AND label IN (%s)"
+                % ",".join("?" * len(cfg.caption.labels)),
+                list(cfg.caption.labels),
+            ).fetchone()["n"],
             "duration": duration,
             "active_seconds": active,
             "reduction": (1.0 - active / duration) if duration else 0.0,
@@ -419,6 +431,41 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
             while chunk := await file.read(1 << 20):
                 out.write(chunk)
         return _start_import(stage_video(temp, incoming))
+
+    @app.post("/api/caption")
+    def start_captioning(force: bool = False, limit: int | None = None) -> dict:
+        """Describe what the tracked people are doing.
+
+        Its own job rather than part of an import: about six seconds a person
+        on a CPU, so it is something to start and walk away from.
+        """
+        if not cfg.has_caption_model:
+            raise HTTPException(
+                400,
+                "No captioning model. Fetch it with: "
+                ".venv-export/Scripts/python tools/fetch_caption_model.py",
+            )
+
+        from tsv.captioning import caption_tracklets
+        from tsv.search import rebuild_text_index
+
+        def work(report):
+            report.stage("Describing what people are doing", 0.95, "")
+
+            def on_progress(done: int, total: int) -> None:
+                if total:
+                    report.step(done / total, f"{done} of {total} described")
+
+            summary = caption_tracklets(
+                conn, cfg, force=force, limit=limit, on_progress=on_progress
+            )
+            # Descriptions are only useful once they are searchable.
+            report.stage("Making them searchable", 0.05, "")
+            rebuild_text_index(conn)
+            report.step(1.0, "ready")
+            return summary.as_dict()
+
+        return jobs.submit("caption", "people", work).as_dict()
 
     @app.get("/api/jobs")
     def list_jobs() -> list[dict]:

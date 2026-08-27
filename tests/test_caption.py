@@ -212,3 +212,25 @@ def test_the_task_table_covers_the_prompts_that_were_fetched():
     assert set(TASKS.values()) == {
         "<CAPTION>", "<DETAILED_CAPTION>", "<MORE_DETAILED_CAPTION>"
     }
+
+
+def test_the_outstanding_count_falls_as_tracklets_are_described(indexed):
+    """What the app's button counts down.
+
+    Written against the database rather than through the API, because the
+    quantity being checked is bookkeeping - whether a described tracklet stops
+    being offered as work - and not whether the model writes good text.
+    """
+    from tsv.captioning import pending_tracklets
+
+    conn, cfg = indexed
+    assert len(pending_tracklets(conn, cfg)) == 2
+
+    conn.execute("UPDATE tracklets SET caption = 'a person on the stairs' WHERE id = 1")
+    conn.commit()
+    assert len(pending_tracklets(conn, cfg)) == 1
+
+    outstanding = conn.execute(
+        "SELECT COUNT(*) c FROM tracklets WHERE caption IS NULL AND label = 'person'"
+    ).fetchone()["c"]
+    assert outstanding == 1
