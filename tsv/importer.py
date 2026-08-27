@@ -32,6 +32,13 @@ from tsv.search import rebuild_text_index
 # about fifteen frames a second. Detection dominates and the bar should say so.
 STAGE_SHARES = {"ingest": 0.15, "analyze": 0.75, "index": 0.10}
 
+# With captioning on, it dominates everything else: about six seconds an image
+# against roughly fifteen frames a second for detection. The bar has to say so
+# or it will appear to stall at the end of a run.
+STAGE_SHARES_WITH_CAPTIONS = {
+    "ingest": 0.05, "analyze": 0.25, "caption": 0.66, "index": 0.04,
+}
+
 
 @dataclass
 class ImportResult:
@@ -41,6 +48,7 @@ class ImportResult:
     duration: float = 0.0
     active: float = 0.0
     faces: int = 0
+    captions: int = 0
     skipped: int = 0
     failed: list[str] | None = None
 
@@ -57,6 +65,7 @@ class ImportResult:
             "active": round(self.active, 1),
             "reduction": round(self.reduction, 4),
             "faces": self.faces,
+            "captions": self.captions,
             "skipped": self.skipped,
             "failed": self.failed or [],
         }
@@ -80,16 +89,20 @@ def import_videos(
     cfg: Config,
     report: Reporter | None = None,
     force: bool = False,
+    with_captions: bool | None = None,
 ) -> ImportResult:
     """Ingest, analyse and index a file or folder, reporting progress."""
     result = ImportResult(failed=[])
+    captions_on = cfg.caption.enabled if with_captions is None else with_captions
+    captions_on = captions_on and cfg.has_caption_model
+    shares = STAGE_SHARES_WITH_CAPTIONS if captions_on else STAGE_SHARES
     videos = iter_videos(path)
     if not videos:
         raise ValueError(f"no video files found in {path}")
 
     # ---- motion segmentation ----
     if report:
-        report.stage("Finding activity", STAGE_SHARES["ingest"],
+        report.stage("Finding activity", shares["ingest"],
                      f"scanning {len(videos)} file(s)")
     done = 0
 
@@ -117,7 +130,7 @@ def import_videos(
 
     if report:
         report.stage(
-            "Recognising objects", STAGE_SHARES["analyze"],
+            "Recognising objects", shares["analyze"],
             f"{pending} file(s) to analyse" if pending else "nothing new to analyse",
         )
 
@@ -161,9 +174,26 @@ def import_videos(
             # timeline is usable; say so rather than failing the whole import.
             result.failed.append(f"detection skipped: {exc}")
 
-    # ---- zones and the word index ----
+    # ---- captions, when asked for ----
+    if captions_on:
+        from tsv.captioning import caption_tracklets
+
+        if report:
+            report.stage("Describing what people are doing", shares["caption"],
+                         "this is the slow part")
+
+        def on_caption(done: int, total: int) -> None:
+            if report and total:
+                report.step(done / total, f"{done} of {total} described")
+
+        try:
+            captions = caption_tracklets(conn, cfg, on_progress=on_caption)
+            result.captions = captions.captioned
+        except FileNotFoundError as exc:
+            result.failed.append(f"captioning skipped: {exc}")
+
     if report:
-        report.stage("Building the index", STAGE_SHARES["index"], "")
+        report.stage("Building the index", shares["index"], "")
     recompute_events(conn)
     if report:
         report.step(0.5, "")

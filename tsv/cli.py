@@ -375,6 +375,41 @@ def cmd_ask(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_caption(args: argparse.Namespace) -> int:
+    """Describe what people in the index are doing."""
+    from tsv.captioning import caption_tracklets
+    from tsv.search import rebuild_text_index
+
+    cfg = _config(args)
+    if not cfg.has_caption_model:
+        print(f'no captioning model in {cfg.caption_model_dir}')
+        print('fetch it with:  .venv-export/Scripts/python tools/fetch_caption_model.py')
+        return 1
+
+    conn = db.open_db(cfg.db_path)
+    print('describing tracklets (about 6 seconds each on a CPU)')
+
+    def on_progress(done: int, total: int) -> None:
+        # A plain line every few, rather than a carriage-return spinner:
+        # this output is usually being read in a scrollback or a log.
+        if done == total or done % 5 == 0:
+            print(f"  {done}/{total} described", flush=True)
+
+    summary = caption_tracklets(conn, cfg, force=args.force, limit=args.limit,
+                                on_progress=on_progress)
+    print()
+    print(f'  described  {summary.captioned}')
+    print(f'  too small  {summary.skipped_small}')
+    print(f'  failed     {summary.failed}')
+    if summary.captioned:
+        print(f'  {summary.per_caption:.1f}s each, {summary.elapsed:.0f}s total')
+    for text in summary.samples[:5]:
+        print(f'    "{text}"')
+    if summary.captioned:
+        print(f'indexed {rebuild_text_index(conn)} segments for search')
+    return 0
+
+
 def cmd_stats(args: argparse.Namespace) -> int:
     cfg = _config(args)
     conn = db.open_db(cfg.db_path)
@@ -461,6 +496,8 @@ def main(argv: list[str] | None = None) -> int:
     p_analyze.add_argument("--fps", type=float, help="frames per second to sample")
     p_analyze.add_argument("--backend", help='pin a backend, e.g. "onnxruntime:CPU"')
     p_analyze.add_argument("--model", help="model filename inside the data model dir")
+    p_analyze.add_argument("--captions", action="store_true",
+                           help="also describe what people are doing (slow)")
     p_analyze.set_defaults(func=cmd_analyze)
 
     p_bench = sub.add_parser("bench", help="time the detector on each available backend")
@@ -535,6 +572,11 @@ def main(argv: list[str] | None = None) -> int:
     p_ask.add_argument("--limit", type=int, default=20)
     p_ask.add_argument("--no-semantic", action="store_true")
     p_ask.set_defaults(func=cmd_ask)
+
+    p_caption = sub.add_parser("caption", help="describe what people are doing (slow)")
+    p_caption.add_argument("--force", action="store_true", help="re-caption everything")
+    p_caption.add_argument("--limit", type=int, help="stop after this many")
+    p_caption.set_defaults(func=cmd_caption)
 
     p_stats = sub.add_parser("stats", help="what is in the index")
     p_stats.set_defaults(func=cmd_stats)

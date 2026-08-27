@@ -107,6 +107,15 @@ def segment_document(conn: sqlite3.Connection, segment_id: int) -> str:
         if row["who"]:
             parts.append(row["who"])
 
+    # Captions, where they exist. This is what makes a question about an
+    # action - a bottle, a box, a phone - findable at all: no other stage
+    # produces the word "medicine".
+    for row in conn.execute(
+        "SELECT caption FROM tracklets WHERE segment_id = ? AND caption IS NOT NULL",
+        (segment_id,),
+    ):
+        parts.append(row["caption"])
+
     for row in conn.execute(
         """SELECT DISTINCT z.name, e.kind FROM events e
            JOIN zones z ON z.id = e.zone_id WHERE e.segment_id = ?""",

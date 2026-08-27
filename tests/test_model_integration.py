@@ -164,3 +164,63 @@ def test_best_face_ignores_faces_below_the_size_floor(face_pipeline):
     rng = np.random.default_rng(4)
     frame = rng.integers(0, 255, (240, 320, 3), dtype=np.uint8)
     assert face_pipeline.best_face_in(frame, min_size=10_000) is None
+
+
+# ---------- captioning ----------
+
+CAPTION_DIR = DEFAULT.caption_model_dir
+have_caption = DEFAULT.has_caption_model
+
+caption_only = pytest.mark.skipif(not have_caption, reason="no captioning model fetched")
+
+
+@pytest.fixture(scope="module")
+def captioner():
+    from tsv.models.caption import build_captioner
+
+    return build_captioner(CAPTION_DIR, max_tokens=32)
+
+
+@caption_only
+def test_the_four_graphs_load_and_agree_on_width(captioner):
+    assert captioner is not None
+    assert "florence2" in captioner.info
+
+
+@caption_only
+def test_a_caption_is_produced_and_is_words(captioner):
+    """Not a quality check - only that the decoding loop terminates and the
+    byte-level detokenisation yields readable text rather than mojibake."""
+    rng = np.random.default_rng(7)
+    frame = rng.integers(0, 255, (240, 240, 3), dtype=np.uint8)
+    caption = captioner.caption(frame, "caption")
+
+    assert caption.tokens > 0
+    assert caption.text
+    assert caption.text.isprintable()
+    assert " " in caption.text.strip()
+
+
+@caption_only
+def test_the_cross_attention_cache_survives_more_than_two_steps(captioner):
+    """The bug this guards against.
+
+    On cached steps the merged decoder returns placeholder cross-attention
+    key/value tensors with a zero batch. Copying those over the real cache
+    corrupts it, and the failure surfaces on the *next* step as a broadcast
+    error deep inside the decoder - far from the cause, and only after the
+    loop has already run twice.
+    """
+    rng = np.random.default_rng(8)
+    frame = rng.integers(0, 255, (256, 256, 3), dtype=np.uint8)
+    caption = captioner.caption(frame, "more_detailed")
+    assert caption.tokens > 3, "generation stopped before the cache was reused"
+
+
+@caption_only
+def test_a_longer_task_yields_at_least_as_much_text(captioner):
+    rng = np.random.default_rng(9)
+    frame = rng.integers(0, 255, (320, 320, 3), dtype=np.uint8)
+    short = captioner.caption(frame, "caption")
+    long = captioner.caption(frame, "more_detailed")
+    assert long.tokens >= short.tokens

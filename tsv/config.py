@@ -163,6 +163,34 @@ class ClipConfig:
 
 
 @dataclass(frozen=True)
+class CaptionConfig:
+    """Phase 4: describing what a person is doing.
+
+    Off by default, and that is a cost decision rather than a quality one. The
+    vision encoder is about six seconds an image on a CPU and the decoder is
+    25ms a token, so the price is per *image* and essentially fixed. A day of
+    footage with a few hundred person tracklets is therefore the better part of
+    an hour - worth running overnight, not while somebody waits.
+    """
+
+    enabled: bool = False
+    model_dir: str = "florence2"
+    # Length is nearly free once the image is encoded, so ask for the most
+    # detailed description available: more words means more to search.
+    task: str = "more_detailed"
+    max_tokens: int = 64
+    # Only people are captioned. A description of a parked car earns nothing
+    # that the object label did not already say.
+    labels: tuple[str, ...] = ("person",)
+    # Extra room around the detector's box. What someone is holding is usually
+    # just outside it.
+    context: float = 0.35
+    # Below this, a crop carries no describable detail and the model invents.
+    min_crop_px: int = 96
+    force_backend: str | None = None
+
+
+@dataclass(frozen=True)
 class Config:
     data_dir: Path = Path("data")
     # Models are shared between indexes rather than belonging to one, so this
@@ -172,6 +200,7 @@ class Config:
     detect: DetectConfig = field(default_factory=DetectConfig)
     face: FaceConfig = field(default_factory=FaceConfig)
     clip: ClipConfig = field(default_factory=ClipConfig)
+    caption: CaptionConfig = field(default_factory=CaptionConfig)
     tier_b: TierBConfig = field(default_factory=TierBConfig)
     segments: SegmentConfig = field(default_factory=SegmentConfig)
     thumb_width: int = 320
@@ -216,6 +245,16 @@ class Config:
     @property
     def has_clip_models(self) -> bool:
         return self.clip_image_path.is_file() and self.clip_text_path.is_file()
+
+    @property
+    def caption_model_dir(self) -> Path:
+        return self.model_dir / self.caption.model_dir
+
+    @property
+    def has_caption_model(self) -> bool:
+        needed = ("vision_encoder", "embed_tokens", "encoder_model", "decoder_model_merged")
+        d = self.caption_model_dir
+        return all((d / f"{n}.onnx").is_file() for n in needed) and (d / "prompts.json").is_file()
 
     @property
     def has_face_models(self) -> bool:

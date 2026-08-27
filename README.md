@@ -27,7 +27,9 @@ filters, fused into one ranked answer.
 
 **Phase 4 (in progress):** answers, not just results. *When did Rafi go out
 the front door yesterday* returns two timestamps and the clips to play, rather
-than forty segments to scroll. Captioning and audio are not built yet.
+than forty segments to scroll. Optional Florence-2 captioning describes what
+each person is doing, so *red bag* or *medicine bottle* become searchable
+words. Audio transcription is not built yet.
 
 ## The app
 
@@ -327,6 +329,10 @@ python -m tsv ask "how many times did Rafi go out yesterday"
 ```
 
 ```bash
+python -m tsv caption
+```
+
+```bash
 python -m tsv serve
 ```
 
@@ -346,6 +352,19 @@ py -3.14 -m venv .venv-export && .venv-export/Scripts/python -m pip install ultr
 ```bash
 .venv-export/Scripts/python tools/export_model.py --out data/models
 ```
+
+For captioning - describing what people are doing, so actions and objects
+become searchable - from the same environment:
+
+```bash
+.venv-export/Scripts/python tools/fetch_caption_model.py --out data/models
+```
+
+That fetches Florence-2-base-ft as four int8 ONNX graphs (~275 MB) plus its
+task prompts, tokenised once so the runtime needs no tokenizer. Captioning is
+off by default: it costs about six seconds per person on a CPU, essentially
+all of it in the vision encoder, so it is a background pass rather than part
+of an import.
 
 For semantic search, from the same environment:
 

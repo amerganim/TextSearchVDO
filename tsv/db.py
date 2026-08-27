@@ -11,7 +11,7 @@ import sqlite3
 import threading
 from pathlib import Path
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_info (
@@ -232,6 +232,14 @@ def init(conn: sqlite3.Connection) -> None:
     ensure_column(conn, "tracklets", "identity_id", "INTEGER REFERENCES identities(id)")
     ensure_column(conn, "tracklets", "identity_score", "REAL")
     ensure_column(conn, "tracklets", "identity_source", "TEXT")
+
+    # Phase 4. What a vision-language model said this person was doing. Stored
+    # on the tracklet because that is the unit captioned - one description per
+    # continuous sighting, not per frame, since the vision encoder costs about
+    # six seconds an image and dominates everything else.
+    ensure_column(conn, "tracklets", "caption", "TEXT")
+    ensure_column(conn, "tracklets", "caption_task", "TEXT")
+    ensure_column(conn, "tracklets", "captioned_at", "REAL")
 
     row = conn.execute("SELECT version FROM schema_info").fetchone()
     if row is None:

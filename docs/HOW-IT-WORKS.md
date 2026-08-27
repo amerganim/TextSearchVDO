@@ -181,6 +181,7 @@ model changed.
 | **ArcFace** `w600k_mbf` | `w600k_mbf.onnx` | 13.6 MB | 512-d face vector for identity | CPU |
 | **CLIP ViT-B/32** image | `clip_image.onnx` | 351 MB | Turn frames and crops into meaning vectors | CPU |
 | **CLIP ViT-B/32** text | `clip_text.onnx` | 254 MB | Turn your words into the same space | CPU |
+| **Florence-2-base-ft** | `florence2/` (4 graphs) | 275 MB | Describe what a person is doing | CPU |
 
 Provenance, and how each is obtained:
 
@@ -189,6 +190,7 @@ Provenance, and how each is obtained:
 | YOLO11n | Ultralytics checkpoint, exported to ONNX | `tools/export_model.py` |
 | SCRFD + ArcFace | InsightFace `buffalo_s` pack | `tools/fetch_face_models.py` |
 | CLIP | `openai/clip-vit-base-patch32` via transformers | `tools/export_clip.py` |
+| Florence-2 | `onnx-community/Florence-2-base-ft`, int8 | `tools/fetch_caption_model.py` |
 
 **None of these are runtime dependencies.** `torch`, `ultralytics`,
 `transformers` and `insightface` are used once, from a throwaway
@@ -215,6 +217,19 @@ discrete GPU:
 | CLIP image @ 224 | 82 ms | **51 ms** | CPU |
 | CLIP text @ 77 tokens | 34 ms | 36 ms | a wash |
 
+Captioning is measured differently because it is a different shape of work:
+
+| Florence-2 stage | CPU |
+|---|---:|
+| Vision encoder @ 768px | **6.07 s** |
+| Text encoder | 0.22 s |
+| Decoding | 25 ms per token |
+
+Almost the whole cost is encoding the image, and it is paid once per image
+regardless of how much text comes back. That decides the design: **describe a
+tracklet once, never a frame**, and ask for the longest description available,
+because length is nearly free.
+
 It is not about model size — CLIP's image encoder is by far the largest graph
 here and still loses on the iGPU. Only a sustained, convolution-heavy workload
 keeps that GPU busy enough to pay back the cost of moving data to it. Compile
@@ -228,10 +243,21 @@ CPU — in the same pass, chosen per model.
 
 ## Is there an LLM or a VLM?
 
-**No, and that is a deliberate choice for the parts that are built.**
+**No language model. One optional vision-language model.**
 
-Nothing generates text. There is no captioning model, no chat model, no
-vision-language model anywhere in indexing or answering.
+Nothing generates prose answers, and no chat model is involved. Question
+parsing is ordinary code, described below.
+
+**Florence-2-base-ft does generate text** - one description per tracked
+person, written into the index so it can be searched by word. It is off by
+default and enabled per run, because six seconds an image means a day of
+footage with a few hundred people in it is the better part of an hour. That is
+a background job somebody chooses, not something to make them wait through.
+
+Its value is words that no other stage can produce. Detection knows a person
+is there; identity knows who; zones know where. Only a caption can say *red
+bag*, *pink shirt*, or *medicine bottle* - and once it does, those become
+ordinary search terms.
 
 **Question understanding is entity grounding, not language understanding.**
 The vocabulary a question can draw on is closed and already in the database:
@@ -262,12 +288,13 @@ flowchart LR
     subgraph BUILT["Built"]
         A["Motion"] --> B["Objects"] --> C["Identity + zones"] --> D["CLIP search"] --> E["Grounded answers"]
     end
+    F["VLM captions<br/>Florence-2, optional"]
+    E --> F
     subgraph NEXT["Not built"]
-        F["VLM captions<br/>on person crops"]
         G["Audio transcription"]
         H["LLM answer phrasing"]
     end
-    E -.->|"would unlock<br/>fine-grained actions"| F
+    F -.-> G
 ```
 
 ---
@@ -306,6 +333,7 @@ Measured on the baseline laptop, no discrete GPU:
 | A 24-hour recording, motion pass | roughly 10 minutes |
 | Detection | ~15 frames/second |
 | An 8-minute phone video, end to end | ~40 seconds |
+| Captioning, per tracked person | ~5.5 seconds |
 | Footage discarded before detection | ~73% on test clips |
 
 ## Every threshold is still a guess
