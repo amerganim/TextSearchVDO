@@ -169,10 +169,15 @@ def import_videos(
         try:
             analyze_all(conn, cfg, force=force, on_result=on_analyze,
                         on_progress=on_progress)
-        except FileNotFoundError as exc:
-            # No detector present. Motion segmentation still worked, and the
-            # timeline is usable; say so rather than failing the whole import.
-            result.failed.append(f"detection skipped: {exc}")
+        except FileNotFoundError:
+            # No detector present. Motion segmentation still worked and the
+            # timeline is usable, so this is a note rather than a failure - but
+            # it has to say what to do, not print a path and leave the reader
+            # to infer that a model is missing.
+            result.failed.append(
+                "No object detection model, so only movement was found. "
+                "Run: python -m tsv setup"
+            )
 
     # ---- captions, when asked for ----
     if captions_on:

@@ -192,6 +192,14 @@ a.link {
 .notice.warn { border-color: #5a4a24; background: #2a2415; color: #f0cf8a; }
 .notice.good { border-color: #26404f; background: #16242c; color: #a9d5e6; }
 
+.notice code {
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: .92em;
+  background: rgba(255, 255, 255, .08);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
 /* ---------- empty state ---------- */
 
 .stage { padding: 22px 22px 40px; }

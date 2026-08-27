@@ -27,6 +27,7 @@ from tsv.importer import import_videos, stage_video
 from tsv.jobs import JobRunner
 from tsv.query import ask as run_ask
 from tsv.search import SearchFilters, rebuild_text_index, search as run_search
+from tsv.setup import missing_summary
 
 
 class ImportIn(BaseModel):
@@ -170,7 +171,11 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
                 "SELECT COUNT(*) AS n FROM segment_embeddings WHERE kind = 'clip'"
             ).fetchone()["n"],
             "semantic_ready": cfg.has_clip_models,
+            "detector_ready": cfg.detect_model_path.is_file(),
             "caption_ready": cfg.has_caption_model,
+            # One sentence a person can act on, rather than each page working
+            # out for itself what an absent file means.
+            "setup_needed": missing_summary(cfg),
             "n_captioned": conn.execute(
                 "SELECT COUNT(*) AS n FROM tracklets WHERE caption IS NOT NULL"
             ).fetchone()["n"],

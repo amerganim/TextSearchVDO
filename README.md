@@ -31,6 +31,36 @@ than forty segments to scroll. Optional Florence-2 captioning describes what
 each person is doing, so *red bag* or *medicine bottle* become searchable
 words. Audio transcription is not built yet.
 
+## Getting started
+
+Double-click **setup.bat** once, then **TextSearchVDO.bat**. Or from a prompt:
+
+```bash
+py -3.14 -m venv .venv && .venv/Scripts/python -m pip install -r requirements.txt
+```
+
+```bash
+.venv/Scripts/python -m tsv setup
+```
+
+`setup` fetches or builds all four models — object detection, faces, semantic
+search and descriptions — skipping whatever is already there. It is the only
+step that needs the internet, downloads roughly a gigabyte, and takes a few
+minutes.
+
+It builds a throwaway `.venv-export` to do it. That environment carries torch,
+and it exists so the *running* application does not: two of the four model sets
+have to be exported rather than downloaded, because Ultralytics publishes YOLO11
+only as PyTorch checkpoints and the CLIP ONNX on the hub is a single fused graph
+rather than the separate encoders this runtime uses. Pass `--clean` to delete it
+afterwards.
+
+```bash
+.venv/Scripts/python -m tsv setup --check
+```
+
+tells you what is present without changing anything.
+
 ## The app
 
 Double-click **TextSearchVDO.bat**, or:
@@ -58,8 +88,8 @@ corner, or at `/advanced`.
 ## Architecture
 
 **[How it works, step by step, with diagrams](docs/HOW-IT-WORKS.md)** — the
-full pipeline, which model does what, where each one runs, and why there is no
-LLM in it.
+full pipeline, which model does what, where each one runs, and why question
+parsing needs no LLM.
 
 The design is **index → retrieve → verify**, not summarise-then-search. A
 summary of 24h of hallway footage will never contain "father took his
@@ -76,7 +106,8 @@ Stage 1  Detection + tracking (YOLO / ByteTrack)    <- done
 Stage 2  Identity (face) and user-drawn zones       <- done
 Stage 3  CLIP embeddings + hybrid retrieval         <- done
 Stage 4  Question answering                         <- done
-         VLM captions, audio ASR                    <- not started
+         VLM captions (Florence-2, optional)        <- done
+         Audio transcription                        <- not started
 ```
 
 Stage 0 itself is two tiers:
@@ -394,11 +425,10 @@ both matter: `nms=False`, because `tsv.models.detect` does its own class-aware
 NMS and a graph with NMS baked in has a different output layout entirely; and
 `dynamic=False`, because OpenVINO compiles static shapes far better.
 
-## Setup
+## Setup, in detail
 
-```bash
-py -3.14 -m venv .venv && .venv/Scripts/python -m pip install -r requirements.txt
-```
+`python -m tsv setup` runs everything below; these are the individual steps it
+performs, for when one of them needs doing by hand.
 
 PyAV bundles ffmpeg, so no separate ffmpeg install is needed. Verified on
 Python 3.14 (av 18, OpenCV 5, numpy 2.5).

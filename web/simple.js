@@ -16,7 +16,7 @@
 const $ = (id) => document.getElementById(id);
 const api = (path, options) => fetch(path, options).then((r) => r.json());
 
-const state = { poll: null, indexed: 0, importing: false };
+const state = { poll: null, indexed: 0, importing: false, setupNeeded: false };
 
 /** Captions come from a model, so they are text of unknown shape. */
 function escapeHtml(text) {
@@ -58,8 +58,34 @@ function notice(message, kind = "error") {
   $("notices").prepend(box);
 }
 
+/** A standing note when parts of the app are not installed.
+ *
+ * Shown once and kept, rather than raised per failed action: a missing model
+ * is a state of the installation, and finding out about it only when a search
+ * returns nothing is how it used to feel broken.
+ */
+function showSetupBanner(summary) {
+  const existing = document.getElementById("setup-note");
+  if (!summary || !summary.setup_needed) {
+    if (existing) existing.remove();
+    return;
+  }
+  if (existing) return;
+
+  const box = document.createElement("div");
+  box.className = "notice warn";
+  box.id = "setup-note";
+  box.innerHTML =
+    `<span>${summary.setup_needed.replace(
+      "Run: python -m tsv setup",
+      "Run <code>python -m tsv setup</code> to finish installing.",
+    )}</span>`;
+  $("notices").appendChild(box);
+}
+
 /** The search box is live whenever there is anything at all to search. */
 function refreshChrome(summary) {
+  showSetupBanner(summary);
   const has = state.indexed > 0;
   $("searchbar").hidden = !has;
   $("examples").hidden = !has;
@@ -316,12 +342,22 @@ async function runSearch() {
   if (!rows.length) {
     $("status").textContent = "";
     $("nothing").hidden = false;
-    $("nothing-why").textContent = body.answer
-      ? body.answer.headline
-      : state.importing
-        ? "Nothing matching so far — the video is still being read, so try again in a moment."
-        : "Nothing in the video looks like that. Try simpler words, or describe "
-          + "what is visible rather than what happened.";
+    if (body.answer) {
+      $("nothing-why").textContent = body.answer.headline;
+    } else if (state.importing) {
+      $("nothing-why").textContent =
+        "Nothing matching so far — the video is still being read, so try again in a moment.";
+    } else if (state.setupNeeded) {
+      // Distinguish "not in the video" from "this app cannot look for that
+      // yet", which are the same empty screen but entirely different problems.
+      $("nothing-why").textContent =
+        "This copy is not fully set up, so searching by description is limited. "
+        + "Run python -m tsv setup, then try again.";
+    } else {
+      $("nothing-why").textContent =
+        "Nothing in the video looks like that. Try simpler words, or describe "
+        + "what is visible rather than what happened.";
+    }
     return;
   }
 
@@ -359,6 +395,7 @@ function closePlayer() {
 async function refreshLibrary() {
   const summary = await api("/api/summary");
   state.indexed = summary.n_videos || 0;
+  state.setupNeeded = Boolean(summary.setup_needed);
   $("library").innerHTML = state.indexed
     ? `<b>${state.indexed}</b> video(s) &middot; <b>${fmtDuration(summary.duration)}</b> indexed`
     : "";

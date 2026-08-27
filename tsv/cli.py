@@ -410,6 +410,54 @@ def cmd_caption(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_setup(args: argparse.Namespace) -> int:
+    """Fetch or build every model the app can use."""
+    from tsv.setup import COMPONENTS, run_setup, status
+
+    cfg = _config(args)
+
+    if args.check:
+        print(f"models in {cfg.model_dir}")
+        for component, ready in status(cfg):
+            mark = "yes" if ready else "no "
+            tail = "" if ready else f"  ({component.why})"
+            print(f"  [{mark}] {component.title}{tail}")
+        absent = [c for c, ready in status(cfg) if not ready]
+        print()
+        print("everything is present." if not absent
+              else f"{len(absent)} missing. Run:  python -m tsv setup")
+        return 0 if not absent else 1
+
+    only = set(args.only) if args.only else None
+    print(f"setting up into {cfg.model_dir}")
+    report = run_setup(cfg, only=only, keep_export_env=not args.clean)
+
+    print()
+    for title in report.installed:
+        print(f"  added   {title}")
+    for title, why in report.failed:
+        print(f"  FAILED  {title}: {why}")
+
+    # Re-check everything, not just what this run touched: with --only, a
+    # successful run can still leave the app half installed, and saying
+    # "ready" then would be false.
+    remaining = [c for c, is_ready in status(cfg) if not is_ready]
+    ready_now = len(COMPONENTS) - len(remaining)
+    print(f"\n{ready_now} of {len(COMPONENTS)} ready in {report.elapsed:.0f}s")
+
+    if report.failed:
+        print("some parts did not install; the app runs with less of it until they are.")
+        return 1
+    if remaining:
+        names = ", ".join(c.title.split(" (")[0].lower() for c in remaining)
+        print(f"still missing: {names}")
+        print("run  python -m tsv setup  without --only to finish")
+        return 0
+
+    print("ready. Start it with:  python -m tsv app")
+    return 0
+
+
 def cmd_stats(args: argparse.Namespace) -> int:
     cfg = _config(args)
     conn = db.open_db(cfg.db_path)
@@ -577,6 +625,15 @@ def main(argv: list[str] | None = None) -> int:
     p_caption.add_argument("--force", action="store_true", help="re-caption everything")
     p_caption.add_argument("--limit", type=int, help="stop after this many")
     p_caption.set_defaults(func=cmd_caption)
+
+    p_setup = sub.add_parser("setup", help="fetch or build the models (run this first)")
+    p_setup.add_argument("--check", action="store_true", help="report what is present, change nothing")
+    p_setup.add_argument("--only", nargs="+", metavar="PART",
+                         choices=["detector", "faces", "search", "captions"],
+                         help="limit to certain parts")
+    p_setup.add_argument("--clean", action="store_true",
+                         help="delete the export environment afterwards")
+    p_setup.set_defaults(func=cmd_setup)
 
     p_stats = sub.add_parser("stats", help="what is in the index")
     p_stats.set_defaults(func=cmd_stats)

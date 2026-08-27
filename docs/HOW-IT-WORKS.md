@@ -10,6 +10,35 @@ about six seconds on a CPU. [What it adds, and what it costs.](#is-there-an-llm-
 
 ---
 
+## Getting it running
+
+```bash
+python -m tsv setup
+```
+
+That fetches or builds all four model sets, skipping whatever is present. It
+is the only step needing the internet.
+
+Two of the four have to be *built* rather than downloaded — Ultralytics
+publishes YOLO11 only as PyTorch checkpoints, and the CLIP ONNX on the hub is
+one fused graph rather than the separate image and text encoders used here — so
+setup creates a throwaway environment carrying torch, uses it, and leaves the
+running application without it. At inference this is ONNX Runtime and numpy,
+which is what makes it small enough to hand to somebody else.
+
+| Component | Size | Without it |
+|---|---:|---|
+| Object detection | 11 MB | a video is only motion; no objects, people or search |
+| Face recognition | 16 MB | people cannot be named |
+| Semantic search | 605 MB | search by description is unavailable; words still work |
+| Descriptions | 275 MB | no captions, so actions are not searchable |
+
+Only the detector is really required. Everything else degrades to less of the
+app rather than a broken one, and the app says which parts are absent instead
+of failing at the moment they would have been used.
+
+---
+
 ## At a glance
 
 The whole design is a cascade: each stage is more expensive than the last, so
