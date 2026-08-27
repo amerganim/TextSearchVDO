@@ -86,8 +86,8 @@ def test_every_element_the_scripts_reach_for_exists_in_the_page():
     """
     html = (WEB / "app.html").read_text(encoding="utf-8")
     ids = set(re.findall(r'id="([\w-]+)"', html))
-    for script in ("simple.js", "people.js"):
-        wanted = set(re.findall(r'(?:\$|pq)\("([\w-]+)"\)', _js(script)))
+    for script in ("simple.js", "people.js", "places.js"):
+        wanted = set(re.findall(r'(?:\$|pq|lq)\("([\w-]+)"\)', _js(script)))
         missing = wanted - ids
         assert not missing, f"{script} looks for {sorted(missing)}, absent from app.html"
 
@@ -152,6 +152,68 @@ def test_searching_finishes_any_descriptions_still_outstanding():
     assert "catchUpOnCaptions" in js
     assert re.search(r"catchUpOnCaptions\(\);", js), "it is defined but never called"
     assert "state.captionStarted" in js, "nothing stops it starting on every keystroke"
+
+
+def test_drawing_a_place_is_reachable_from_the_app():
+    """Zones were only drawable on the advanced page.
+
+    The app's own onboarding promises questions about going in and out, and a
+    direction can only be measured against a drawn line - so the one setup
+    step that makes the headline feature work lived behind a link the app
+    never explained.
+    """
+    html = (WEB / "app.html").read_text(encoding="utf-8")
+    assert 'id="places-toggle"' in html
+    assert 'id="place-canvas"' in html, "nothing to draw on"
+    assert 'src="/static/places.js"' in html
+    assert "initPlaces()" in _js("simple.js"), "the Places button is never wired up"
+
+
+def test_a_direction_question_with_no_place_drawn_says_so():
+    """Otherwise it is an empty screen that looks like an answer.
+
+    "when did he go out" against a library with no line drawn is not "it never
+    happened" - it is a question nothing in the index can measure. Those are
+    different, and only one of them is fixed by two clicks.
+    """
+    js = _js("simple.js")
+    assert "event_kind" in js, "the app cannot tell a direction question from any other"
+    assert re.search(r"wantsDirection && !state\.zones", js)
+    assert 'id="draw-a-place"' in (WEB / "app.html").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("script", ["places.js", "zones.js"])
+def test_the_inbound_arrow_points_where_the_server_says_in_is(script: str):
+    """Which side counts as "in" is invisible until something draws it.
+
+    This is computed, not matched: the normal is lifted out of the JavaScript
+    and run through the server's own side_of_line for lines at four
+    orientations. Canvas y grows downward, so the y-up form of a perpendicular
+    is the wrong one - and with it the arrow points at the side the server
+    calls cross_out. Every doorway drawn by following it would report entries
+    as exits, in an app whose headline question is "when did he go out".
+    """
+    from tsv.zones import side_of_line
+
+    js = _js(script)
+    nx_expr = re.search(r"const nx = (-?)dy / len;", js)
+    ny_expr = re.search(r"const ny = (-?)dx / len;", js)
+    assert nx_expr and ny_expr, f"{script} no longer computes an inbound normal"
+    nx_sign = -1.0 if nx_expr.group(1) else 1.0
+    ny_sign = -1.0 if ny_expr.group(1) else 1.0
+
+    for a, b in (((0.0, 0.0), (1.0, 0.0)),      # left to right
+                 ((1.0, 0.0), (0.0, 0.0)),      # right to left
+                 ((0.0, 0.0), (0.0, 1.0)),      # top to bottom
+                 ((0.3, 0.2), (0.8, 0.9))):     # diagonal
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        length = (dx * dx + dy * dy) ** 0.5
+        nx, ny = nx_sign * dy / length, ny_sign * dx / length
+        mid = ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)
+        tip = (mid[0] + nx * 0.2, mid[1] + ny * 0.2)
+        assert side_of_line(tip, a, b) > 0, (
+            f"{script}: the arrow for {a}->{b} points at the cross_out side"
+        )
 
 
 # ---------- docs ----------

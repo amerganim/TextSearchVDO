@@ -22,6 +22,7 @@ const state = {
   // zero for anything indexed before that was true, and searching those
   // videos for what somebody was doing would silently find nothing.
   toCaption: 0, captionReady: false, captionStarted: false, captioning: false,
+  zones: 0,
 };
 
 /** Captions come from a model, so they are text of unknown shape. */
@@ -100,6 +101,10 @@ function refreshChrome(summary) {
 
   // Naming appears only once there is somebody to name, and carries the count
   // still unnamed - the whole point of the panel is the work outstanding.
+  // Places can be drawn as soon as there is a camera to draw on, which is as
+  // soon as anything has been indexed.
+  $("places-toggle").hidden = !has;
+
   const people = $("people-toggle");
   const unnamed = summary ? summary.n_people_unnamed || 0 : 0;
   people.hidden = !summary || !summary.n_people;
@@ -368,6 +373,7 @@ async function runSearch() {
   $("stage-results").hidden = false;
   $("status").textContent = "Looking…";
   $("nothing").hidden = true;
+  $("draw-a-place").hidden = true;
   $("results").innerHTML = "";
 
   let body;
@@ -405,9 +411,28 @@ async function runSearch() {
     return;
   }
 
+  // A direction question against no drawn place is not "nothing found", it
+  // is a question the index cannot answer yet. Reporting it as absent is a
+  // wrong answer that looks like a right one, and leaves the reader with no
+  // idea that a two-click setup step would fix it.
+  const wantsDirection = Boolean(body.understood && body.understood.event_kind);
+  if (wantsDirection && !state.zones) {
+    $("status").textContent = "";
+    $("nothing").hidden = false;
+    $("nothing-what").textContent = "Nothing to measure that against";
+    $("nothing-why").textContent =
+      "You asked about going in or out, but no doorway has been drawn yet. "
+      + "Two clicks across one in the camera view is enough, and it reads the "
+      + "videos you already have.";
+    $("draw-a-place").hidden = false;
+    return;
+  }
+
   if (!rows.length) {
     $("status").textContent = "";
     $("nothing").hidden = false;
+    $("nothing-what").textContent = "Nothing found";
+    $("draw-a-place").hidden = true;
     if (body.answer) {
       $("nothing-why").textContent = body.answer.headline;
     } else if (state.captioning) {
@@ -471,6 +496,7 @@ async function refreshLibrary() {
   const summary = await api("/api/summary");
   state.indexed = summary.n_videos || 0;
   state.setupNeeded = Boolean(summary.setup_needed);
+  state.zones = summary.n_zones || 0;
   $("library").innerHTML = state.indexed
     ? `<b>${state.indexed}</b> video(s) &middot; <b>${fmtDuration(summary.duration)}</b> indexed`
     : "";
@@ -501,12 +527,14 @@ async function boot() {
     watchJob(body.id, "caption");
   };
   $("choose").onclick = chooseFiles;
+  $("draw-a-place").onclick = () => window.openPlaces && window.openPlaces();
   $("filepick").onchange = (e) => {
     importFiles(e.target.files);
     e.target.value = "";           // let the same file be picked again
   };
 
   initPeople();
+  initPlaces();
 
   $("player-close").onclick = closePlayer;
   $("player-backdrop").onclick = (e) => {

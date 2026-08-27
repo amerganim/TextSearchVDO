@@ -179,6 +179,14 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
                 "WHERE label = 'person' AND identity_id IS NULL"
             ).fetchone()["n"],
             "faces_ready": cfg.has_face_models,
+            # Places drawn, and cameras to draw them on. A question about a
+            # direction - went out, came in - can only be answered against a
+            # zone, so the app needs to know whether any exist before it
+            # reports "nothing found" to somebody who has drawn none.
+            "n_zones": conn.execute("SELECT COUNT(*) AS n FROM zones").fetchone()["n"],
+            "n_cameras": conn.execute(
+                "SELECT COUNT(*) AS n FROM cameras"
+            ).fetchone()["n"],
             "n_embedded": conn.execute(
                 "SELECT COUNT(*) AS n FROM segment_embeddings WHERE kind = 'clip'"
             ).fetchone()["n"],

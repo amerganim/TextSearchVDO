@@ -106,8 +106,12 @@ function drawDirection(ctx, a, b, colour) {
   const dy = b[1] - a[1];
   const len = Math.hypot(dx, dy) || 1;
   // Left of a->b is inbound, matching side_of_line() on the server.
-  const nx = dy / len;
-  const ny = -dx / len;
+  // Canvas y grows downward, so the inbound normal is (-dy, dx) - not the
+  // (dy, -dx) that the same maths gives on a y-up plane. With the wrong sign
+  // the arrow points at the side the server calls cross_out, and every
+  // doorway drawn by following it reports entries as exits.
+  const nx = -dy / len;
+  const ny = dx / len;
 
   ctx.strokeStyle = colour;
   ctx.lineWidth = 2;

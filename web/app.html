@@ -15,6 +15,7 @@
     <div class="library" id="library"></div>
     <nav class="actions">
       <button type="button" class="ghost" id="people-toggle" aria-expanded="false" hidden>People</button>
+      <button type="button" class="ghost" id="places-toggle" aria-expanded="false" hidden>Places</button>
       <button type="button" class="ghost" id="describe" hidden></button>
       <button type="button" id="add">Add video</button>
       <a class="ghost link" href="/advanced" title="Timeline, zones and cameras">Advanced</a>
@@ -58,7 +59,8 @@
         <ol class="steps">
           <li><b>Add a video.</b> It stays where it is on your disk.</li>
           <li><b>Wait while it reads.</b> Most of a recording is nothing happening, and that part is skipped.</li>
-          <li><b>Search it.</b> "a person carrying a box", or name someone and ask when they came in.</li>
+          <li><b>Search it.</b> "a person carrying a box", or describe what you are looking for.</li>
+          <li><b>Optional:</b> name the people in it, and draw a line across a doorway. Then you can ask <i>when did Rafi go out the front door</i>.</li>
         </ol>
 
         <div class="welcome-actions">
@@ -85,6 +87,64 @@
       <div class="panel-empty" id="people-empty" hidden></div>
     </section>
 
+    <!-- Places: a doorway or an area, so questions can be about direction. -->
+    <section class="panel" id="places-panel" hidden>
+      <div class="panel-head">
+        <div>
+          <h2>Places</h2>
+          <p class="panel-note" id="places-note">
+            Draw a line across a doorway to ask who went <b>in</b> or <b>out</b>
+            of it. Draw a shape around an area to ask who was <b>there</b>, and
+            for how long. Without one, a question about a direction has nothing
+            to measure against.
+          </p>
+        </div>
+        <button type="button" class="ghost tiny" id="places-close">Close</button>
+      </div>
+
+      <div class="places-editor">
+        <div class="place-stage" id="place-stage">
+          <img id="place-frame" alt="A still frame from the camera, to draw on">
+          <canvas id="place-canvas"></canvas>
+          <div class="place-hint" id="place-hint"></div>
+        </div>
+
+        <aside class="place-side">
+          <div class="field" id="place-camera-field" hidden>
+            <label for="place-camera">Camera</label>
+            <select id="place-camera"></select>
+          </div>
+
+          <fieldset class="place-kind">
+            <legend>What are you drawing?</legend>
+            <label>
+              <input type="radio" name="place-kind" value="line" checked>
+              <span><b>A doorway</b><small>Two clicks. Counts who crosses, and which way.</small></span>
+            </label>
+            <label>
+              <input type="radio" name="place-kind" value="region">
+              <span><b>An area</b><small>Three or more clicks. Counts who enters, and how long they stay.</small></span>
+            </label>
+          </fieldset>
+
+          <div class="field">
+            <label for="place-name">Call it</label>
+            <input id="place-name" type="text" placeholder="front door" maxlength="64" autocomplete="off">
+          </div>
+
+          <div class="place-actions">
+            <button type="button" id="place-save" disabled>Save</button>
+            <button type="button" class="ghost" id="place-undo" disabled>Undo point</button>
+            <button type="button" class="ghost" id="place-clear" disabled>Start over</button>
+          </div>
+          <div class="place-status" id="place-status" aria-live="polite"></div>
+
+          <h3>Places you have drawn</h3>
+          <div class="place-list" id="place-list"></div>
+        </aside>
+      </div>
+    </section>
+
     <!-- Results. -->
     <section class="stage" id="stage-results" hidden>
       <div class="answer" id="answer" hidden>
@@ -94,8 +154,9 @@
       <div class="status" id="status" aria-live="polite"></div>
       <div class="results" id="results"></div>
       <div class="nothing" id="nothing" hidden>
-        <h2>Nothing found</h2>
+        <h2 id="nothing-what">Nothing found</h2>
         <p id="nothing-why"></p>
+        <button type="button" id="draw-a-place" hidden>Draw a doorway</button>
       </div>
     </section>
   </main>
@@ -112,6 +173,7 @@
 
   <input type="file" id="filepick" accept="video/*,.mp4,.mkv,.avi,.mov,.m4v,.ts,.dav,.flv" multiple hidden>
   <script src="/static/people.js"></script>
+  <script src="/static/places.js"></script>
   <script src="/static/simple.js"></script>
 </body>
 </html>

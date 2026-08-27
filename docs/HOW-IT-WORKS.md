@@ -187,6 +187,20 @@ flowchart TD
     HITS --> PLAY
 ```
 
+### Drawing the places a question can be about
+
+A direction is not a property of a video, it is a property of a line somebody
+drew. `zones.py` calls a crossing `cross_in` when `side_of_line(end, a, b)` is
+positive — left of the line as drawn — so *which way round you draw it* is
+what makes *went out* mean going out. The editor draws that side as an arrow
+before you save, because it is otherwise a coin toss discovered days later in
+a wrong answer about your own front door.
+
+Events cost no video decoding: they are recomputed from the boxes already
+stored, so a line drawn now has a crossing count immediately. That count is
+the honest test of whether it is anywhere useful — zero means redraw it, not
+wait.
+
 ### Naming people, and where it stops
 
 Naming a sighting adds its face vector to that person's gallery; matching then

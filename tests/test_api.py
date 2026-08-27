@@ -411,6 +411,36 @@ def test_a_named_sighting_can_be_rejected_through_the_api(zone_client):
     assert zone_client.delete("/api/objects/999999/identity").status_code == 404
 
 
+def test_summary_counts_the_places_drawn_and_cameras_to_draw_on(zone_client):
+    """What the Places button is built from.
+
+    A direction question can only be measured against a drawn line, so the app
+    has to know whether any exist before it reports "nothing found" to
+    somebody who has drawn none.
+    """
+    before = zone_client.get("/api/summary").json()
+    assert before["n_zones"] == 0
+    assert before["n_cameras"] >= 1
+
+    _add_line(zone_client, "front door")
+    after = zone_client.get("/api/summary").json()
+    assert after["n_zones"] == 1
+
+
+def test_a_line_drawn_in_the_app_answers_a_direction_question(zone_client):
+    """The whole point of drawing one, end to end.
+
+    Events come from boxes already in the index, so a line saved now has a
+    count immediately - which is also the honest test of whether it was drawn
+    anywhere useful.
+    """
+    made = _add_line(zone_client, "front door").json()
+    assert made["n_events"] > 0, "nothing crossed a line down the middle of the frame"
+
+    body = zone_client.get("/api/ask?q=when did anything cross the front door").json()
+    assert body["understood"]["zone"] == "front door"
+
+
 def test_deleting_an_identity_unnames_its_sightings(zone_client):
     tracklet_id = _first_tracklet(zone_client)
     identity_id = zone_client.post(

@@ -74,6 +74,13 @@ what you are looking for. Results come back as frames with times; clicking one
 plays from just before that moment. If nothing matches, it says so rather than
 handing back the closest three frames in the library.
 
+**Places** is where you draw a line across a doorway, or a shape around an
+area. It matters more than it sounds: a direction is only measurable against
+a drawn line, so until one exists *when did he go outside* has nothing to
+compare a track to — and the app now says exactly that instead of returning an
+empty screen. Saving one reports how many crossings it already found in the
+videos you have, which is the honest test of whether it is in the right place.
+
 **People** appears in the corner once a recording contains any, and carries
 the number still unnamed. Naming one sighting adds its face to a gallery and
 finds the same person everywhere else, which is what turns *a person went out*
@@ -90,8 +97,11 @@ already lives** rather than being uploaded to the machine it is already on. A
 browser can still be used (`python -m tsv serve`); there it uploads, because
 there is no path to point at.
 
-The full timeline, zone editor and people tools are behind **Advanced** in the
-corner, or at `/advanced`.
+**Advanced**, in the corner or at `/advanced`, is the operator view rather
+than a better search: a 24-hour timeline per camera showing where the activity
+was and — as important — where nothing was recorded at all, filters for
+browsing by camera, day and object class, and a readout of what the question
+parser actually grounded. It has a way back to the app.
 
 ## Architecture
 
