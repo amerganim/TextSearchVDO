@@ -3,10 +3,10 @@
 Every diagram here renders on GitHub. Everything described runs on the user's
 own machine; no footage or query leaves the device.
 
-**Short answer to "which LLM?": there isn't one.** No large language model and
-no vision-language model is used anywhere — not for indexing, not for
-answering. Four small vision models do the perception, and the question
-parsing is ordinary code. [Why, and what would change if one were added.](#is-there-an-llm-or-a-vlm)
+**Short answer to "which LLM?": there is no language model.** Question parsing
+is ordinary code, not an LLM. There *is* one vision-language model — Florence-2
+— but it is optional and off by default, because describing one image takes
+about six seconds on a CPU. [What it adds, and what it costs.](#is-there-an-llm-or-a-vlm)
 
 ---
 
