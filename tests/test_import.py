@@ -194,6 +194,45 @@ def test_staging_a_file_does_not_clobber_an_existing_one(tmp_path):
     assert landed.read_bytes() == b"new"
 
 
+def test_an_upload_is_staged_under_the_name_the_user_sent(tmp_path):
+    """The temporary ".part-" name must not become the library entry's name.
+
+    It did, and because the collision suffix then ran off that name, four
+    uploads of one video produced ".part-holiday-1.mp4" through "-4.mp4" -
+    four library entries for one recording.
+    """
+    staging = tmp_path / "incoming"
+    staging.mkdir()
+    source = staging / ".part-holiday.mp4"
+    source.write_bytes(b"video")
+
+    landed = stage_video(source, staging, name="holiday.mp4")
+
+    assert landed.name == "holiday.mp4"
+    assert not source.exists()
+
+
+def test_the_same_recording_under_two_names_is_indexed_once(tmp_path, cfg, day_clip):
+    """Uploading a file twice must not double the library.
+
+    The browser has no path to send, so a second upload of the same video
+    lands under a new filename. Matching on path alone called that a new
+    recording and counted its hours again.
+    """
+    conn = db.open_db(cfg.db_path)
+    first = tmp_path / "ch09_20260101080000.mp4"
+    shutil.copyfile(day_clip["path"], first)
+    second = tmp_path / "ch09_20260101080000-copy.mp4"
+    shutil.copyfile(first, second)
+
+    assert import_videos(conn, first, cfg).files == 1
+    again = import_videos(conn, second, cfg)
+
+    assert again.files == 0
+    assert again.duplicates and first.name in again.duplicates[0]
+    assert conn.execute("SELECT COUNT(*) FROM videos").fetchone()[0] == 1
+
+
 def test_a_finished_job_has_a_finish_time_the_moment_it_reports_done():
     """Status and finish time must land together.
 

@@ -186,6 +186,26 @@ flowchart TD
     HITS --> PLAY
 ```
 
+### Naming people, and where it stops
+
+Naming a sighting adds its face vector to that person's gallery; matching then
+finds them everywhere else. One name, every appearance — that is the whole
+mechanism, and a face is the only thing that carries it.
+
+So it stops wherever the face does. A camera above head height, someone facing
+away, or a wide shot where a head is twenty pixels across all produce a person
+the tracker follows perfectly and a face nothing can read. The app names that
+sighting and says plainly that it will not find the others, because the
+alternative is promising a match that never arrives.
+
+The tempting fix is the CLIP vector already stored for every person crop.
+Measured on real footage it does not work: two crops of the same person score
+a median 0.818 against each other, a person against a *bird* scores 0.805, and
+the person-to-person floor is 0.683. The distributions sit on top of each
+other, so there is no threshold — using it names every person in a recording
+after whoever was named first. `identity.py` keeps the `body` kind wired to
+nothing on purpose, with room for a real re-identification model.
+
 Three signals, kept apart because they fail in different places:
 
 - **Exact filters** are constraints, not ranking. This is what makes *when did

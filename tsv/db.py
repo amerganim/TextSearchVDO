@@ -11,7 +11,7 @@ import sqlite3
 import threading
 from pathlib import Path
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_info (
@@ -217,6 +217,36 @@ def ensure_column(conn: sqlite3.Connection, table: str, column: str, decl: str) 
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
 
+def _backfill_fingerprints(conn: sqlite3.Connection) -> None:
+    """Fingerprint videos indexed before there was such a column.
+
+    Without this the duplicate check only protects libraries built from
+    scratch, and an existing one keeps accepting copies of what it already
+    holds. Two megabytes are read per file, and a file that has since moved
+    or been deleted is left alone rather than treated as an error.
+    """
+    rows = conn.execute(
+        "SELECT id, path FROM videos WHERE fingerprint IS NULL"
+    ).fetchall()
+    if not rows:
+        return
+
+    from tsv.probe import fingerprint
+
+    for row in rows:
+        path = Path(row["path"])
+        if not path.is_file():
+            continue
+        try:
+            conn.execute(
+                "UPDATE videos SET fingerprint = ? WHERE id = ?",
+                (fingerprint(path), int(row["id"])),
+            )
+        except OSError:
+            continue
+    conn.commit()
+
+
 def init(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
 
@@ -237,9 +267,16 @@ def init(conn: sqlite3.Connection) -> None:
     # on the tracklet because that is the unit captioned - one description per
     # continuous sighting, not per frame, since the vision encoder costs about
     # six seconds an image and dominates everything else.
+    # Which recording this file is, independent of where it sits or what it
+    # is called. Uploading the same video a second time used to make a second
+    # library entry, and the totals on screen then counted it twice.
+    ensure_column(conn, "videos", "fingerprint", "TEXT")
+
     ensure_column(conn, "tracklets", "caption", "TEXT")
     ensure_column(conn, "tracklets", "caption_task", "TEXT")
     ensure_column(conn, "tracklets", "captioned_at", "REAL")
+
+    _backfill_fingerprints(conn)
 
     row = conn.execute("SELECT version FROM schema_info").fetchone()
     if row is None:

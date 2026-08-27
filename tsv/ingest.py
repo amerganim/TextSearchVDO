@@ -24,7 +24,7 @@ from tsv.thumbs import extract_thumbs
 @dataclass
 class IngestResult:
     path: Path
-    status: str  # ingested | skipped | failed
+    status: str  # ingested | skipped | duplicate | failed
     duration: float = 0.0
     active_seconds: float = 0.0
     n_segments: int = 0
@@ -62,6 +62,24 @@ class IngestSummary:
         return sum(r.n_segments for r in self.ingested)
 
 
+def _same_recording(conn: sqlite3.Connection, info: probe.VideoInfo) -> str | None:
+    """The path this recording is already indexed under, if any.
+
+    Matched on content rather than path. Uploading a file the browser has
+    already sent lands it under a fresh name in the staging directory, and
+    without this every repeat upload became another library entry with its
+    own copy of the same hours.
+    """
+    if not info.fingerprint:
+        return None
+    row = conn.execute(
+        "SELECT path FROM videos WHERE fingerprint = ? AND path <> ? "
+        "AND ingested_at IS NOT NULL LIMIT 1",
+        (info.fingerprint, str(info.path)),
+    ).fetchone()
+    return str(row["path"]) if row else None
+
+
 def _already_ingested(conn: sqlite3.Connection, info: probe.VideoInfo) -> int | None:
     row = conn.execute(
         "SELECT id, mtime, size_bytes, ingested_at FROM videos WHERE path = ?",
@@ -92,6 +110,16 @@ def ingest_file(
     if not force and _already_ingested(conn, info) is not None:
         return IngestResult(path=path, status="skipped", ts_source=info.ts_source)
 
+    if not force:
+        seen = _same_recording(conn, info)
+        if seen is not None:
+            return IngestResult(
+                path=path,
+                status="duplicate",
+                ts_source=info.ts_source,
+                note=f"already indexed as {Path(seen).name}",
+            )
+
     try:
         packet_scan = scan(path, cfg.tier_a, info.duration)
         duration = packet_scan.duration or info.duration
@@ -110,12 +138,12 @@ def ingest_file(
     cur = conn.execute(
         """INSERT INTO videos(camera_id, path, start_ts, ts_source, duration, fps,
                               width, height, codec, size_bytes, mtime, ingested_at,
-                              active_seconds)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                              active_seconds, fingerprint)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
             camera_id, str(path), info.start_ts, info.ts_source, duration, info.fps,
             info.width, info.height, info.codec, info.size_bytes, info.mtime,
-            time.time(), sum(s.duration for s in segments),
+            time.time(), sum(s.duration for s in segments), info.fingerprint,
         ),
     )
     video_id = int(cur.lastrowid)

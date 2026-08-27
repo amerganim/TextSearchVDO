@@ -346,6 +346,71 @@ def test_events_carry_the_identity_and_can_be_filtered_by_it(zone_client):
     assert zone_client.get("/api/events?identity=Nobody").json() == []
 
 
+def test_summary_counts_the_people_left_to_name(zone_client):
+    """What the People button in the app is built from.
+
+    Without a count of the unnamed there is nothing to put on the button, and
+    naming - the feature the whole product is sold on - had no way into the UI
+    at all.
+    """
+    body = zone_client.get("/api/summary").json()
+    assert body["n_people"] >= 1
+    assert body["n_people_unnamed"] == body["n_people"]
+    assert "faces_ready" in body
+
+    tracklet_id = _first_tracklet(zone_client)
+    zone_client.post("/api/identities/enroll",
+                     json={"tracklet_id": tracklet_id, "name": "Rafi"})
+
+    after = zone_client.get("/api/summary").json()
+    assert after["n_people_unnamed"] == body["n_people_unnamed"] - 1
+
+
+def test_the_people_panel_can_be_built_from_the_endpoints_it_calls(zone_client):
+    """The exact three requests the panel makes on open.
+
+    It shows only sightings with a crop, so a person row without a thumbnail
+    would render a blank square asking somebody to name nothing.
+    """
+    people = zone_client.get("/api/objects?label=person&limit=200").json()
+    assert people and all(p["label"] == "person" for p in people)
+
+    croppable = [p for p in people if p["thumb_path"]]
+    assert croppable, "no person crop to name"
+    assert zone_client.get(f"/api/crop/{croppable[0]['id']}").status_code == 200
+    assert zone_client.get("/api/identities").json() == []
+
+
+def test_naming_a_sighting_with_no_face_says_so_rather_than_claiming_a_match(zone_client):
+    """The honest half of enrolment.
+
+    A tracklet with no stored face embedding teaches the gallery nothing, so
+    the name covers that one sighting. Reporting it as a success would promise
+    matching that will never happen.
+    """
+    tracklet_id = _first_tracklet(zone_client)
+    body = zone_client.post(
+        "/api/identities/enroll", json={"tracklet_id": tracklet_id, "name": "Rafi"}
+    ).json()
+
+    assert body["examples_added"] == 0
+    assert body["kinds"] == []
+    assert body["note"]
+    assert zone_client.post("/api/identities/assign?kind=face").json()["assigned"] == 0
+
+
+def test_a_named_sighting_can_be_rejected_through_the_api(zone_client):
+    """The undo the app offers next to every guessed name."""
+    tracklet_id = _first_tracklet(zone_client)
+    zone_client.post("/api/identities/enroll",
+                     json={"tracklet_id": tracklet_id, "name": "Rafi"})
+
+    assert zone_client.delete(f"/api/objects/{tracklet_id}/identity").json() == {"cleared": True}
+    named = [o for o in zone_client.get("/api/objects").json() if o["id"] == tracklet_id][0]
+    assert named["identity_name"] is None
+    assert zone_client.delete("/api/objects/999999/identity").status_code == 404
+
+
 def test_deleting_an_identity_unnames_its_sightings(zone_client):
     tracklet_id = _first_tracklet(zone_client)
     identity_id = zone_client.post(

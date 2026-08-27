@@ -13,6 +13,7 @@ import pytest
 from tsv import db
 from tsv.identity import (
     aggregate, assign_identities, create_identity, delete_identity, enroll_tracklet,
+    unname_tracklet,
     from_blob, get_or_create_identity, list_identities, load_gallery, match_vector,
     normalise, store_tracklet_embedding, to_blob,
 )
@@ -121,7 +122,7 @@ def test_enrolling_a_tracklet_fills_the_gallery(conn):
     add_tracklet(conn, 1, person_vector(1))
     identity, added = enroll_tracklet(conn, 1, "Rafi")
 
-    assert added == 1
+    assert added == ["face"]
     listed = list_identities(conn)[0]
     assert listed["name"] == "Rafi"
     assert listed["n_examples"] == 1
@@ -150,6 +151,80 @@ def test_gallery_of_another_kind_is_empty(conn):
     add_tracklet(conn, 1, person_vector(1), kind="face")
     enroll_tracklet(conn, 1, "Rafi")
     assert load_gallery(conn, "body")[0].size == 0
+
+
+def test_a_clip_embedding_is_never_used_as_an_identity(conn):
+    """CLIP describes what something is, not which one it is.
+
+    The analysis pass stores a CLIP vector for every person crop, and reaching
+    for it as the missing "body" vector is the obvious shortcut. Measured on
+    real footage it does not work at all: same-person pairs score a median
+    0.818, a person against a *bird* scores 0.805, and the person-to-person
+    floor is 0.683 - the distributions sit on top of each other. Used as an
+    identity it names every person in a recording after the first one named.
+    """
+    add_tracklet(conn, 1, person_vector(1), kind="clip")
+    identity, added = enroll_tracklet(conn, 1, "Rafi")
+
+    assert added == [], "a CLIP vector became an identity example"
+    assert load_gallery(conn, "body")[0].size == 0
+
+    add_tracklet(conn, 2, person_vector(1) + 0.01 * RNG.normal(size=DIM), kind="clip")
+    assert assign_identities(conn, "body").n_assigned == 0
+
+
+def test_appearance_matching_would_never_name_a_car(conn):
+    """The guard that has to hold if a body model is ever added.
+
+    An appearance vector describes whatever was cropped, and nothing in the
+    maths stops a vehicle scoring above the threshold against a person's
+    gallery. Being told a car is your son is worse than being told nothing.
+    """
+    add_tracklet(conn, 1, person_vector(1), kind="body")
+    enroll_tracklet(conn, 1, "Rafi")
+
+    add_tracklet(conn, 2, person_vector(1) + 0.01 * RNG.normal(size=DIM), kind="body")
+    conn.execute("UPDATE tracklets SET label = 'car' WHERE id = 2")
+    conn.commit()
+
+    assert assign_identities(conn, "body").n_assigned == 0
+    conn.execute("UPDATE tracklets SET label = 'person' WHERE id = 2")
+    conn.commit()
+    assert assign_identities(conn, "body").n_assigned == 1
+
+
+def test_a_wrong_name_can_be_taken_off_a_sighting(conn):
+    """And must leave the gallery with it.
+
+    A rejected example that stays in the gallery keeps teaching the mistake to
+    every later match.
+    """
+    add_tracklet(conn, 1, person_vector(1))
+    enroll_tracklet(conn, 1, "Rafi")
+
+    assert unname_tracklet(conn, 1) is True
+    row = conn.execute(
+        "SELECT identity_id, identity_source FROM tracklets WHERE id = 1"
+    ).fetchone()
+    assert row["identity_id"] is None and row["identity_source"] is None
+    assert load_gallery(conn, "face")[0].size == 0
+    # Rafi had one sighting and it has just been rejected, so nothing is left
+    # of him. A name with no examples and no sightings can never match, but
+    # would go on being listed as somebody the index knows.
+    assert list_identities(conn) == []
+    assert unname_tracklet(conn, 1) is False
+
+
+def test_rejecting_one_sighting_leaves_the_others_named(conn):
+    """The name survives as long as anything still carries it."""
+    add_tracklet(conn, 1, person_vector(1))
+    add_tracklet(conn, 2, person_vector(1))
+    enroll_tracklet(conn, 1, "Rafi")
+    enroll_tracklet(conn, 2, "Rafi")
+
+    assert unname_tracklet(conn, 2) is True
+    listed = list_identities(conn)
+    assert len(listed) == 1 and listed[0]["n_sightings"] == 1
 
 
 # ---------- matching ----------

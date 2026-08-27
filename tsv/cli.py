@@ -29,6 +29,9 @@ def _print_result(result: IngestResult) -> None:
     if result.status == "skipped":
         print(f"  skip    {result.path.name}")
         return
+    if result.status == "duplicate":
+        print(f"  dup     {result.path.name}: {result.note}")
+        return
     if result.status == "failed":
         print(f"  FAILED  {result.path.name}: {result.note}")
         return
@@ -249,7 +252,9 @@ def cmd_people(args: argparse.Namespace) -> int:
             return 1
         identity, added = enroll_tracklet(conn, args.tracklet, args.name)
         print(f"tracklet {args.tracklet} is {identity.name}")
-        if not added:
+        if added:
+            print(f"  learned: {', '.join(added)}")
+        else:
             print("  note: no embeddings stored yet, so this teaches the gallery nothing")
         return 0
 

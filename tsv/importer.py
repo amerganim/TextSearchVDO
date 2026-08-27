@@ -50,6 +50,11 @@ class ImportResult:
     faces: int = 0
     captions: int = 0
     skipped: int = 0
+    # Files that turned out to be a copy of something already indexed. Counted
+    # apart from `skipped`, which means "unchanged since last time": one is
+    # nothing to do, the other is worth telling the user about, because they
+    # asked for a video and got no new library entry.
+    duplicates: list[str] | None = None
     failed: list[str] | None = None
 
     @property
@@ -67,17 +72,24 @@ class ImportResult:
             "faces": self.faces,
             "captions": self.captions,
             "skipped": self.skipped,
+            "duplicates": self.duplicates or [],
             "failed": self.failed or [],
         }
 
 
-def stage_video(source: Path, staging_dir: Path) -> Path:
-    """Copy an uploaded file into the staging area, without clobbering."""
+def stage_video(source: Path, staging_dir: Path, name: str | None = None) -> Path:
+    """Move a received file into the staging area under a final name.
+
+    `name` exists because uploads are written to a ".part-" file first; without
+    it the temporary prefix became the video's name in the library, and every
+    repeat upload added "-1", "-2" to it.
+    """
     staging_dir.mkdir(parents=True, exist_ok=True)
-    target = staging_dir / source.name
+    wanted = Path(name or source.name)
+    target = staging_dir / wanted.name
     counter = 1
     while target.exists():
-        target = staging_dir / f"{source.stem}-{counter}{source.suffix}"
+        target = staging_dir / f"{wanted.stem}-{counter}{wanted.suffix}"
         counter += 1
     shutil.move(str(source), target)
     return target
@@ -92,7 +104,7 @@ def import_videos(
     with_captions: bool | None = None,
 ) -> ImportResult:
     """Ingest, analyse and index a file or folder, reporting progress."""
-    result = ImportResult(failed=[])
+    result = ImportResult(failed=[], duplicates=[])
     captions_on = cfg.caption.enabled if with_captions is None else with_captions
     captions_on = captions_on and cfg.has_caption_model
     shares = STAGE_SHARES_WITH_CAPTIONS if captions_on else STAGE_SHARES
@@ -111,6 +123,8 @@ def import_videos(
         done += 1
         if item.status == "failed":
             result.failed.append(f"{item.path.name}: {item.note}")
+        elif item.status == "duplicate":
+            result.duplicates.append(f"{item.path.name}: {item.note}")
         elif item.status == "skipped":
             result.skipped += 1
         else:

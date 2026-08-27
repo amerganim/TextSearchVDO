@@ -21,6 +21,7 @@ from tsv.config import DEFAULT, Config
 from tsv.events import create_zone, delete_zone, list_zones, recompute_events
 from tsv.identity import (
     assign_identities, delete_identity, enroll_tracklet, list_identities,
+    unname_tracklet,
 )
 from tsv.models.clip import build_clip
 from tsv.importer import import_videos, stage_video
@@ -167,6 +168,17 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
             "n_named": conn.execute(
                 "SELECT COUNT(*) AS n FROM tracklets WHERE identity_id IS NOT NULL"
             ).fetchone()["n"],
+            # People, and how many of them still have no name. The app hides
+            # naming entirely until there is somebody to name, and says how
+            # much is left to do once there is.
+            "n_people": conn.execute(
+                "SELECT COUNT(*) AS n FROM tracklets WHERE label = 'person'"
+            ).fetchone()["n"],
+            "n_people_unnamed": conn.execute(
+                "SELECT COUNT(*) AS n FROM tracklets "
+                "WHERE label = 'person' AND identity_id IS NULL"
+            ).fetchone()["n"],
+            "faces_ready": cfg.has_face_models,
             "n_embedded": conn.execute(
                 "SELECT COUNT(*) AS n FROM segment_embeddings WHERE kind = 'clip'"
             ).fetchone()["n"],
@@ -404,12 +416,18 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
             ],
         }
 
-    def _start_import(path: Path) -> dict:
+    def _start_import(path: Path, staged: bool = False) -> dict:
         if not path.exists():
             raise HTTPException(400, f"no such file or folder: {path}")
 
         def work(report):
-            return import_videos(conn, path, cfg, report=report).as_dict()
+            result = import_videos(conn, path, cfg, report=report).as_dict()
+            # A copy this app made of a recording it already has is pure waste
+            # - these files are whole videos - so it goes as soon as the import
+            # reports it added nothing.
+            if staged and result["duplicates"] and not result["files"]:
+                path.unlink(missing_ok=True)
+            return result
 
         job = jobs.submit("import", path.name, work)
         return job.as_dict()
@@ -431,11 +449,14 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
         incoming = cfg.data_dir / "incoming"
         incoming.mkdir(parents=True, exist_ok=True)
 
-        temp = incoming / f".part-{file.filename}"
+        # Written under a temporary name so a half-received file is never
+        # mistaken for a video, then renamed to what the user actually sent.
+        safe = Path(file.filename).name
+        temp = incoming / f".part-{safe}"
         with temp.open("wb") as out:
             while chunk := await file.read(1 << 20):
                 out.write(chunk)
-        return _start_import(stage_video(temp, incoming))
+        return _start_import(stage_video(temp, incoming, name=safe), staged=True)
 
     @app.post("/api/caption")
     def start_captioning(force: bool = False, limit: int | None = None) -> dict:
@@ -566,8 +587,13 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
             raise HTTPException(400, str(exc)) from None
         return {
             "identity_id": identity.id, "name": identity.name,
-            "examples_added": added,
-            # Zero means the tracklet had no embedding yet - the sighting is
+            "examples_added": len(added),
+            # Which kinds were learned, because they are worth very different
+            # promises: a face is the same next week, an appearance vector is
+            # the same jacket. The app says so rather than claiming a match it
+            # cannot stand behind.
+            "kinds": added,
+            # Empty means the tracklet had no embedding yet - the sighting is
             # still labelled, but it teaches the gallery nothing.
             "note": "" if added else "no embeddings stored for this tracklet yet",
         }
@@ -577,6 +603,15 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
         if not delete_identity(conn, identity_id):
             raise HTTPException(404)
         return {"deleted": identity_id}
+
+    @app.delete("/api/objects/{tracklet_id}/identity")
+    def unname(tracklet_id: int) -> dict:
+        """Say this sighting is not who it was labelled as."""
+        if conn.execute(
+            "SELECT 1 FROM tracklets WHERE id = ?", (tracklet_id,)
+        ).fetchone() is None:
+            raise HTTPException(404, "no such tracklet")
+        return {"cleared": unname_tracklet(conn, tracklet_id)}
 
     @app.post("/api/identities/assign")
     def assign(

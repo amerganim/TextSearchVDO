@@ -70,6 +70,67 @@ def test_pages_reference_only_assets_that_exist():
             assert (WEB / asset).is_file(), f"{page} references missing {asset}"
 
 
+# ---------- the app is wired to its own markup ----------
+
+
+def _js(name: str) -> str:
+    return (WEB / name).read_text(encoding="utf-8")
+
+
+def test_every_element_the_scripts_reach_for_exists_in_the_page():
+    """A typo'd id fails silently at runtime.
+
+    `document.getElementById` returns null and the next property access throws
+    inside an event handler, where nothing surfaces it - the button simply
+    does nothing when clicked.
+    """
+    html = (WEB / "app.html").read_text(encoding="utf-8")
+    ids = set(re.findall(r'id="([\w-]+)"', html))
+    for script in ("simple.js", "people.js"):
+        wanted = set(re.findall(r'(?:\$|pq)\("([\w-]+)"\)', _js(script)))
+        missing = wanted - ids
+        assert not missing, f"{script} looks for {sorted(missing)}, absent from app.html"
+
+
+def test_the_naming_panel_is_reachable_from_the_app():
+    """Enrolment existed as an API and in the advanced page only.
+
+    The product's headline question - when did a named person go out - was
+    therefore unanswerable through the app somebody actually opens.
+    """
+    html = (WEB / "app.html").read_text(encoding="utf-8")
+    assert 'id="people-toggle"' in html
+    assert 'id="people-panel"' in html
+    assert 'src="/static/people.js"' in html
+    assert "initPeople()" in _js("simple.js"), "the People button is never wired up"
+
+
+def test_naming_teaches_the_gallery_rather_than_labelling_one_sighting():
+    """Enrolling alone names the sighting in front of you.
+
+    Matching is what finds the same person elsewhere, and it is the whole
+    reason to type a name at all, so the app must run it straight after.
+    """
+    js = _js("people.js")
+    assert "/api/identities/enroll" in js
+    assert "/api/identities/assign" in js
+    enroll_at = js.index("/api/identities/enroll")
+    assert js.index("/api/identities/assign") > enroll_at
+
+
+def test_an_exact_answer_only_wins_when_it_used_the_whole_question():
+    """Otherwise the app throws away its own better result.
+
+    "a person carrying something" grounds "a person" and leaves the rest to
+    similarity. Rendering the exact answer regardless listed every person in
+    the recording, while the ranked search sitting in the same response had
+    already found the one holding a bag.
+    """
+    js = _js("simple.js")
+    assert "semantic_text" in js, "the app ignores what the parse could not ground"
+    assert re.search(r"answered\s*=\s*body\.answer && body\.answer\.found && !leftover", js)
+
+
 # ---------- docs ----------
 
 DOCS = Path(__file__).resolve().parent.parent / "docs"

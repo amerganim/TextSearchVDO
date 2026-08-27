@@ -8,6 +8,8 @@ produced it and surfaced in the UI.
 
 from __future__ import annotations
 
+import hashlib
+import os
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -60,6 +62,10 @@ class VideoInfo:
     size_bytes: int
     mtime: float
     camera: str
+    # Identifies the recording rather than the file. Two copies of one video
+    # under different names have the same fingerprint, which is how a second
+    # upload of something already indexed is recognised as a duplicate.
+    fingerprint: str = ""
 
 
 def _parse_filename_ts(name: str) -> tuple[float, str] | None:
@@ -111,6 +117,26 @@ def iter_videos(root: Path) -> list[Path]:
     return sorted(p for p in root.rglob("*") if p.suffix.lower() in _VIDEO_SUFFIXES and p.is_file())
 
 
+# Enough of the file to identify it, and no more. A recording can be many
+# gigabytes and hashing all of it would cost more than the motion scan that
+# follows; the first and last megabyte plus the exact byte count is specific
+# enough that two different videos colliding is not a practical concern,
+# while two copies of the same one always agree.
+_FINGERPRINT_BYTES = 1 << 20
+
+
+def fingerprint(path: Path) -> str:
+    """A cheap content identity for a video file."""
+    size = path.stat().st_size
+    digest = hashlib.blake2b(str(size).encode(), digest_size=16)
+    with path.open("rb") as handle:
+        digest.update(handle.read(_FINGERPRINT_BYTES))
+        if size > _FINGERPRINT_BYTES * 2:
+            handle.seek(-_FINGERPRINT_BYTES, os.SEEK_END)
+            digest.update(handle.read(_FINGERPRINT_BYTES))
+    return digest.hexdigest()
+
+
 def probe(path: Path) -> VideoInfo:
     stat = path.stat()
     duration = 0.0
@@ -150,4 +176,5 @@ def probe(path: Path) -> VideoInfo:
         size_bytes=stat.st_size,
         mtime=stat.st_mtime,
         camera=guess_camera(path),
+        fingerprint=fingerprint(path),
     )

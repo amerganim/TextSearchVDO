@@ -92,6 +92,19 @@ function refreshChrome(summary) {
   $("stage-empty").hidden = has;
   $("q").disabled = false;
 
+  // Naming appears only once there is somebody to name, and carries the count
+  // still unnamed - the whole point of the panel is the work outstanding.
+  const people = $("people-toggle");
+  const unnamed = summary ? summary.n_people_unnamed || 0 : 0;
+  people.hidden = !summary || !summary.n_people;
+  people.textContent = unnamed ? `People (${unnamed} to name)` : "People";
+  if (summary && summary.n_people && !summary.faces_ready) {
+    people.title = "Face matching is not installed, so a name covers one "
+      + "sighting rather than every appearance.";
+  } else {
+    people.title = "Name someone once and every sighting of them is found";
+  }
+
   // "Describe people" says how much work it is, because it is the one slow
   // thing in the app and starting it blind would be unkind.
   const describe = $("describe");
@@ -222,6 +235,11 @@ function watchJob(jobId, kind) {
       }
       if (r.tracklets) bits.push(`${r.tracklets} object(s) found`);
       if (r.skipped) bits.push(`${r.skipped} already indexed`);
+      // Say so plainly. "Ready." after adding a video that added nothing is
+      // how the library quietly ended up counting the same hours twice.
+      for (const line of r.duplicates || []) {
+        notice(`Already in your library: ${escapeHtml(line)}`, "warn");
+      }
       if (job.kind === "caption") {
         const described = r.captioned || 0;
         notice(
@@ -232,10 +250,12 @@ function watchJob(jobId, kind) {
           "good",
         );
       } else {
-        notice(bits.join(" &middot; ") || "Ready.", "good");
+        const nothing = !bits.length && (r.duplicates || []).length;
+        if (!nothing) notice(bits.join(" &middot; ") || "Ready.", "good");
       }
       if ((r.failed || []).length) notice(r.failed.join("; "));
       refreshChrome(await refreshLibrary());
+      if (typeof reloadPeople === "function") reloadPeople();
       $("q").focus();
     } else if (job.status === "failed") {
       clearInterval(state.poll);
@@ -322,7 +342,14 @@ async function runSearch() {
   renderAnswer(body);
 
   const rows = body.results || [];
-  const answered = body.answer && body.answer.found;
+
+  // An exact answer wins only when it used the whole question. "a person
+  // carrying something" grounds "a person" and drops the rest, so answering
+  // it exactly lists every person in the recording - while the ranked search
+  // right beside it has already found the one holding a bag. The API returns
+  // both; picking the answer regardless threw the better one away.
+  const leftover = (body.understood && body.understood.semantic_text) || "";
+  const answered = body.answer && body.answer.found && !leftover;
 
   if (answered) {
     const seen = new Set();
@@ -362,7 +389,9 @@ async function runSearch() {
   }
 
   renderHits(rows);
-  $("status").textContent = `${rows.length} possible match(es), closest first`;
+  $("status").textContent = leftover && body.answer && body.answer.found
+    ? `${rows.length} possible match(es) for "${escapeHtml(leftover)}", closest first`
+    : `${rows.length} possible match(es), closest first`;
 }
 
 /* ---------- player ---------- */
@@ -431,6 +460,8 @@ async function boot() {
     e.target.value = "";           // let the same file be picked again
   };
 
+  initPeople();
+
   $("player-close").onclick = closePlayer;
   $("player-backdrop").onclick = (e) => {
     if (e.target === $("player-backdrop")) closePlayer();
@@ -445,17 +476,16 @@ async function boot() {
     $("or-drop").textContent = "";
   }
 
-  const zone = $("dropzone");
   for (const name of ["dragenter", "dragover"]) {
     document.addEventListener(name, (e) => {
       e.preventDefault();
-      if (zone) zone.classList.add("over");
+      document.body.classList.add("dragging");
     });
   }
   for (const name of ["dragleave", "drop"]) {
     document.addEventListener(name, (e) => {
       e.preventDefault();
-      if (zone) zone.classList.remove("over");
+      document.body.classList.remove("dragging");
     });
   }
   document.addEventListener("drop", async (e) => {

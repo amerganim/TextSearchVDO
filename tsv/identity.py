@@ -32,6 +32,19 @@ EmbeddingKind = Literal["face", "body"]
 # A face vector is far more discriminative than an appearance one, so the bar
 # for believing an appearance match is higher. Both are guesses until they
 # have been run against real footage with real people in it.
+# Nothing currently writes a "body" vector, so appearance matching finds an
+# empty gallery and does nothing. That is deliberate, and the tempting fix is
+# wrong: the analysis pass does store a CLIP embedding of every person crop,
+# but CLIP is a *semantic* space, not a re-identification one. Measured on
+# real footage, two crops of the same person score a median 0.818 against each
+# other - and a person against a bird scores 0.805, a bird beating the
+# person-to-person floor of 0.683. There is no threshold that separates them.
+# Wiring "body" to those vectors makes every person in a recording match the
+# first one named, which is not identification, it is a confident wrong answer
+# to every later question about that person. A real body-ReID model would go
+# here; until then this stays empty on purpose.
+STORED_KIND: dict[str, str] = {"face": "face", "body": "body"}
+
 DEFAULT_THRESHOLDS: dict[str, float] = {"face": 0.42, "body": 0.62}
 DEFAULT_MARGINS: dict[str, float] = {"face": 0.06, "body": 0.10}
 
@@ -150,6 +163,36 @@ def delete_identity(conn: sqlite3.Connection, identity_id: int) -> bool:
     return cur.rowcount > 0
 
 
+def unname_tracklet(conn: sqlite3.Connection, tracklet_id: int) -> bool:
+    """Take a name off one sighting, and out of the gallery with it.
+
+    Needed because matching now guesses from appearance where no face was
+    clear, and a guess nobody can overrule is worse than no guess. Removing
+    the gallery example matters as much as clearing the label: leaving it
+    would keep teaching the mistake to every later match.
+    """
+    conn.execute(
+        "DELETE FROM identity_embeddings WHERE tracklet_id = ?", (tracklet_id,)
+    )
+    cur = conn.execute(
+        "UPDATE tracklets SET identity_id = NULL, identity_score = NULL, "
+        "identity_source = NULL WHERE id = ? AND identity_id IS NOT NULL",
+        (tracklet_id,),
+    )
+    # A name with nothing left under it is not a person the index knows, it is
+    # a stray row that goes on being offered as "known so far" and can never
+    # match anything. Rejecting the only sighting of someone undoes the whole
+    # enrolment, not half of it.
+    conn.execute(
+        """DELETE FROM identities WHERE id NOT IN (
+               SELECT identity_id FROM identity_embeddings
+               UNION SELECT identity_id FROM tracklets WHERE identity_id IS NOT NULL
+           )"""
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
+
 def store_tracklet_embedding(
     conn: sqlite3.Connection,
     tracklet_id: int,
@@ -173,28 +216,33 @@ def enroll_tracklet(
     tracklet_id: int,
     name: str,
     kinds: Iterable[EmbeddingKind] = ("face", "body"),
-) -> tuple[Identity, int]:
+) -> tuple[Identity, list[str]]:
     """Name a tracklet, and add its embeddings to that identity's gallery.
 
     This is the only way a vector enters the gallery: a person confirmed it.
     Assignments made by matching never feed themselves back in, which would
     let one mistake drift the gallery away from the actual person.
+
+    Returns which kinds were learned, not just how many. The caller has to
+    tell the user something different in each case: a face carries across
+    days, an appearance vector only holds while the clothes do.
     """
     identity = get_or_create_identity(conn, name)
-    added = 0
+    added: list[str] = []
     for kind in kinds:
+        stored = STORED_KIND[kind]
         row = conn.execute(
             "SELECT dim, vector FROM tracklet_embeddings WHERE tracklet_id = ? AND kind = ?",
-            (tracklet_id, kind),
+            (tracklet_id, stored),
         ).fetchone()
         if row is None:
             continue
         conn.execute(
             """INSERT INTO identity_embeddings(identity_id, tracklet_id, kind, dim, vector, created_at)
                VALUES (?,?,?,?,?,?)""",
-            (identity.id, tracklet_id, kind, row["dim"], row["vector"], time.time()),
+            (identity.id, tracklet_id, stored, row["dim"], row["vector"], time.time()),
         )
-        added += 1
+        added.append(kind)
 
     conn.execute(
         "UPDATE tracklets SET identity_id = ?, identity_score = 1.0, identity_source = 'manual' "
@@ -211,7 +259,7 @@ def load_gallery(conn: sqlite3.Connection, kind: EmbeddingKind) -> tuple[np.ndar
         """SELECT e.identity_id, e.dim, e.vector, i.name
            FROM identity_embeddings e JOIN identities i ON i.id = e.identity_id
            WHERE e.kind = ? ORDER BY e.identity_id""",
-        (kind,),
+        (STORED_KIND[kind],),
     ).fetchall()
     if not rows:
         return np.empty((0, 0), dtype=np.float32), [], {}
@@ -280,11 +328,17 @@ def assign_identities(
 
     where = "WHERE te.kind = ? AND (t.identity_id IS NULL"
     where += " OR t.identity_source = 'auto')" if reassign else ")"
+    # Appearance vectors describe whatever was cropped, so without this a car
+    # can score above the threshold against a person's gallery and be given
+    # their name. Faces need no such guard - they are only ever computed on
+    # people in the first place.
+    if kind == "body":
+        where += " AND t.label = 'person'"
     rows = conn.execute(
         f"""SELECT t.id, te.dim, te.vector
             FROM tracklets t JOIN tracklet_embeddings te ON te.tracklet_id = t.id
             {where}""",
-        (kind,),
+        (STORED_KIND[kind],),
     ).fetchall()
 
     updates = []

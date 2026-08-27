@@ -74,6 +74,14 @@ what you are looking for. Results come back as frames with times; clicking one
 plays from just before that moment. If nothing matches, it says so rather than
 handing back the closest three frames in the library.
 
+**People** appears in the corner once a recording contains any, and carries
+the number still unnamed. Naming one sighting adds its face to a gallery and
+finds the same person everywhere else, which is what turns *a person went out*
+into *Rafi went out* — so it is one name, not one name per appearance. Where
+the face is too small or turned away, the app names that sighting and says
+plainly that the others will not be found, rather than promising a match that
+never arrives. Every name it worked out for itself carries **Not them**.
+
 The window is the same server the CLI runs, in a WebView2 frame. That keeps
 one implementation rather than two — the window, a plain browser and the
 planned Android client all talk to the same endpoints. What the window adds is
