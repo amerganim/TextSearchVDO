@@ -11,7 +11,7 @@ import pytest
 
 from tsv import db
 from tsv.config import DEFAULT
-from tsv.importer import import_videos, stage_video
+from tsv.importer import STAGE_SHARES_WITH_CAPTIONS, import_videos, stage_video
 from tsv.jobs import JobRunner
 
 
@@ -192,6 +192,19 @@ def test_staging_a_file_does_not_clobber_an_existing_one(tmp_path):
     assert landed.name != "clip.mp4"
     assert (staging / "clip.mp4").read_bytes() == b"original"
     assert landed.read_bytes() == b"new"
+
+
+def test_captioning_is_part_of_indexing_not_a_button_to_remember():
+    """Descriptions are what make an action searchable at all.
+
+    They used to be opt-in, which meant a freshly indexed video answered
+    "carrying a bag" with nothing and no explanation. The cost is real and it
+    runs last, so everything else is searchable long before it starts.
+    """
+    assert DEFAULT.caption.enabled is True
+    assert STAGE_SHARES_WITH_CAPTIONS["caption"] > STAGE_SHARES_WITH_CAPTIONS["analyze"], (
+        "the progress bar has to say captioning dominates, or it appears to stall"
+    )
 
 
 def test_an_upload_is_staged_under_the_name_the_user_sent(tmp_path):

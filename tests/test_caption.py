@@ -199,9 +199,18 @@ def test_captions_reach_the_word_index(indexed):
     assert lexical_ranking(conn, "helicopter") == []
 
 
-def test_captioning_is_off_by_default():
-    """It costs about six seconds an image; nobody should pay that by accident."""
-    assert DEFAULT.caption.enabled is False
+def test_captioning_is_on_by_default_but_only_where_the_model_is():
+    """It used to be opt-in, and the cost is the reason - about six seconds an
+    image.
+
+    That was still the wrong trade. An undescribed sighting turns "carrying a
+    bag" into an empty screen indistinguishable from the moment not being in
+    the video, and nobody remembers to press a button before searching. It
+    runs last, so everything else is answering questions while it works, and
+    an installation without the weights is unaffected: the importer ands this
+    with `has_caption_model`.
+    """
+    assert DEFAULT.caption.enabled is True
 
 
 def test_build_captioner_returns_none_when_the_model_is_absent(tmp_path):

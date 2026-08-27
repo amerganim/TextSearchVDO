@@ -166,14 +166,21 @@ class ClipConfig:
 class CaptionConfig:
     """Phase 4: describing what a person is doing.
 
-    Off by default, and that is a cost decision rather than a quality one. The
-    vision encoder is about six seconds an image on a CPU and the decoder is
-    25ms a token, so the price is per *image* and essentially fixed. A day of
-    footage with a few hundred person tracklets is therefore the better part of
-    an hour - worth running overnight, not while somebody waits.
+    On whenever the model is present, because a description that has not been
+    written yet is a search that quietly fails: "carrying a bag" matches
+    nothing, and the app cannot tell the reader that the answer might be there
+    but undescribed. Somebody who has to remember to press a button before
+    searching will not.
+
+    It is genuinely the slow part - about six seconds an image on a CPU, and
+    the cost is per *image*, so a night of footage with a few hundred person
+    tracklets is the better part of an hour. Two things make that bearable
+    rather than a stall: it runs last, so motion, objects and search are all
+    live long before it starts, and the progress bar weights it honestly (see
+    STAGE_SHARES_WITH_CAPTIONS) instead of appearing to hang at 95%.
     """
 
-    enabled: bool = False
+    enabled: bool = True
     model_dir: str = "florence2"
     # Length is nearly free once the image is encoded, so ask for the most
     # detailed description available: more words means more to search.

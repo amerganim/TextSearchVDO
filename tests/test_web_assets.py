@@ -131,6 +131,29 @@ def test_an_exact_answer_only_wins_when_it_used_the_whole_question():
     assert re.search(r"answered\s*=\s*body\.answer && body\.answer\.found && !leftover", js)
 
 
+def test_the_advanced_page_has_a_way_back():
+    """It is reached by a link and had none returning.
+
+    In a browser the back button covers for that. The desktop window has no
+    back button at all, so somebody who opened Advanced was stuck there until
+    they restarted the app.
+    """
+    html = (WEB / "index.html").read_text(encoding="utf-8")
+    assert re.search(r'<a[^>]+href="/"', html), "no link back to the simple app"
+
+
+def test_searching_finishes_any_descriptions_still_outstanding():
+    """An undescribed sighting is a search that fails without saying why.
+
+    "carrying a bag" matches nothing, and that empty screen looks exactly like
+    the moment genuinely not being in the video.
+    """
+    js = _js("simple.js")
+    assert "catchUpOnCaptions" in js
+    assert re.search(r"catchUpOnCaptions\(\);", js), "it is defined but never called"
+    assert "state.captionStarted" in js, "nothing stops it starting on every keystroke"
+
+
 # ---------- docs ----------
 
 DOCS = Path(__file__).resolve().parent.parent / "docs"

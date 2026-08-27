@@ -5,8 +5,9 @@ own machine; no footage or query leaves the device.
 
 **Short answer to "which LLM?": there is no language model.** Question parsing
 is ordinary code, not an LLM. There *is* one vision-language model — Florence-2
-— but it is optional and off by default, because describing one image takes
-about six seconds on a CPU. [What it adds, and what it costs.](#is-there-an-llm-or-a-vlm)
+— which runs as the last stage of an import when its weights are installed,
+and costs about six seconds an image.
+[What it adds, and what it costs.](#is-there-an-llm-or-a-vlm)
 
 ---
 
@@ -298,10 +299,16 @@ Nothing generates prose answers, and no chat model is involved. Question
 parsing is ordinary code, described below.
 
 **Florence-2-base-ft does generate text** - one description per tracked
-person, written into the index so it can be searched by word. It is off by
-default and enabled per run, because six seconds an image means a day of
-footage with a few hundred people in it is the better part of an hour. That is
-a background job somebody chooses, not something to make them wait through.
+person, written into the index so it can be searched by word. It runs as the
+last stage of every import once its weights are present.
+
+Six seconds an image means a night of footage with a few hundred people in it
+is the better part of an hour, which is why it used to be opt-in. That was the
+wrong trade: an undescribed sighting turns *carrying a bag* into an empty
+screen indistinguishable from the moment not being in the video. It runs last
+instead, so motion, objects, identity and semantic search are all answering
+questions while it works, and the app says which of the two empty screens the
+reader is looking at.
 
 Its value is words that no other stage can produce. Detection knows a person
 is there; identity knows who; zones know where. Only a caption can say *red

@@ -16,7 +16,13 @@
 const $ = (id) => document.getElementById(id);
 const api = (path, options) => fetch(path, options).then((r) => r.json());
 
-const state = { poll: null, indexed: 0, importing: false, setupNeeded: false };
+const state = {
+  poll: null, indexed: 0, importing: false, setupNeeded: false,
+  // Captioning is part of indexing now, so this is normally zero. It is not
+  // zero for anything indexed before that was true, and searching those
+  // videos for what somebody was doing would silently find nothing.
+  toCaption: 0, captionReady: false, captionStarted: false, captioning: false,
+};
 
 /** Captions come from a model, so they are text of unknown shape. */
 function escapeHtml(text) {
@@ -113,7 +119,9 @@ function refreshChrome(summary) {
     return;
   }
   const todo = summary.n_to_caption || 0;
-  const done = summary.n_captioned || 0;
+  const done = summary.n_captioned || 0;   // only to decide whether to warn
+  state.toCaption = todo;
+  state.captionReady = Boolean(summary.caption_ready);
 
   if (!summary.caption_ready) {
     describe.hidden = done === 0;
@@ -122,14 +130,13 @@ function refreshChrome(summary) {
     describe.title = "The captioning model has not been fetched.";
     return;
   }
-  describe.hidden = false;
-  describe.disabled = state.importing || todo === 0;
-  describe.title = todo
-    ? `About ${Math.round((todo * 6) / 60) || 1} minute(s) of work`
-    : "Everyone in the index has been described";
-  describe.textContent = todo
-    ? `Describe people (${todo})`
-    : `Described ${done}`;
+  // Only shown when there is work outstanding. Importing describes what it
+  // finds, so with nothing pending this was a permanently disabled button
+  // reading "Described 22" - a status wearing a control's clothes.
+  describe.hidden = todo === 0;
+  describe.disabled = state.importing;
+  describe.title = `About ${Math.round((todo * 6) / 60) || 1} minute(s) of work`;
+  describe.textContent = `Describe people (${todo})`;
 }
 
 /* ---------- importing ---------- */
@@ -206,6 +213,7 @@ function jobTitle(job) {
 
 function watchJob(jobId, kind) {
   clearInterval(state.poll);
+  state.captioning = kind === "caption";
   showStrip(kind === "caption" ? "Describing people" : "Reading the video", 0.02, "");
 
   state.poll = setInterval(async () => {
@@ -224,8 +232,11 @@ function watchJob(jobId, kind) {
     // Whatever has been read so far is already searchable.
     refreshChrome(await refreshLibrary());
 
+    state.captioning = job.kind === "caption";
+
     if (job.status === "done") {
       clearInterval(state.poll);
+      state.captioning = false;
       hideStrip();
       const r = job.result || {};
       const bits = [];
@@ -259,6 +270,7 @@ function watchJob(jobId, kind) {
       $("q").focus();
     } else if (job.status === "failed") {
       clearInterval(state.poll);
+      state.captioning = false;
       hideStrip();
       notice(job.error || "That video could not be read.");
     }
@@ -322,9 +334,36 @@ function renderHits(hits) {
   });
 }
 
+/** Finish describing anything left over, once, on the first search.
+ *
+ * A description that has not been written yet is a search that fails without
+ * saying why: "carrying a bag" matches nothing, and the result looks the same
+ * as the moment genuinely not being in the video. New imports describe
+ * themselves, so this only ever fires on a library indexed before that.
+ */
+function catchUpOnCaptions() {
+  if (state.captionStarted || state.importing) return;
+  if (!state.captionReady || !state.toCaption) return;
+
+  state.captionStarted = true;
+  const todo = state.toCaption;
+  api("/api/caption", { method: "POST" }).then((body) => {
+    if (body.detail) return;
+    notice(
+      `Describing ${todo} ${todo === 1 ? "person that was" : "people that were"} `
+      + "indexed before descriptions were switched on. Search again once it "
+      + "finishes to include what they were doing.",
+      "good",
+    );
+    watchJob(body.id, "caption");
+  });
+}
+
 async function runSearch() {
   const text = $("q").value.trim();
   if (!text) return;
+
+  catchUpOnCaptions();
 
   $("stage-results").hidden = false;
   $("status").textContent = "Looking…";
@@ -371,6 +410,13 @@ async function runSearch() {
     $("nothing").hidden = false;
     if (body.answer) {
       $("nothing-why").textContent = body.answer.headline;
+    } else if (state.captioning) {
+      // Not the same as absent. Until a sighting is described, nothing about
+      // what somebody was *doing* is searchable, and saying "nothing found"
+      // would be a wrong answer that looks like a right one.
+      $("nothing-why").textContent =
+        "Nothing matching yet — what people were doing is still being described. "
+        + "Try this search again once that finishes.";
     } else if (state.importing) {
       $("nothing-why").textContent =
         "Nothing matching so far — the video is still being read, so try again in a moment.";

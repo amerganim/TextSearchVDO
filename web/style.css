@@ -37,6 +37,19 @@ header {
 
 h1 { margin: 0; font-size: 16px; letter-spacing: .02em; }
 
+/* Pushed to the far end of the header, where a way out belongs. */
+.back {
+  margin-left: auto;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 14px;
+  padding: 5px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.back:hover { color: var(--accent); border-color: var(--accent); }
+
 .stats { color: var(--muted); font-variant-numeric: tabular-nums; }
 .stats b { color: var(--text); font-weight: 600; }
 

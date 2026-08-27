@@ -400,10 +400,13 @@ become searchable - from the same environment:
 ```
 
 That fetches Florence-2-base-ft as four int8 ONNX graphs (~275 MB) plus its
-task prompts, tokenised once so the runtime needs no tokenizer. Captioning is
-off by default: it costs about six seconds per person on a CPU, essentially
-all of it in the vision encoder, so it is a background pass rather than part
-of an import.
+task prompts, tokenised once so the runtime needs no tokenizer. Once it is
+there, captioning runs as the last stage of every import. It costs about six
+seconds per person on a CPU, essentially all of it in the vision encoder — but
+a description that has not been written is a search that fails silently, and
+nobody remembers to press a button before searching. Motion, objects and
+search are all live long before it starts, and the progress bar weights it
+honestly rather than appearing to stall at the end.
 
 For semantic search, from the same environment:
 
