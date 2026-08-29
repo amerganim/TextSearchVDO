@@ -118,6 +118,11 @@ class DetectConfig:
 class FaceConfig:
     """Phase 2: who a person is."""
 
+    # Which weights these are, recorded on every vector they produce. Two
+    # face models can share a dimension and share nothing else, so a stored
+    # vector is meaningless without knowing what made it - see `model` on the
+    # embedding tables.
+    name: str = "buffalo_s"
     detector_file: str = "det_500m.onnx"
     embedder_file: str = "w600k_mbf.onnx"
     det_size: int = 640
@@ -139,6 +144,11 @@ class FaceConfig:
 class ClipConfig:
     """Phase 3: semantic search."""
 
+    # As with faces, recorded on every vector. This one is sharper: CLIP
+    # ViT-B/32 and ViT-B/16 are both 512-dimensional and entirely
+    # incompatible, so mixing them raises no error at all - it silently
+    # returns nonsense similarity. The name is what stops that.
+    name: str = "clip-vit-b-32"
     image_file: str = "clip_image.onnx"
     text_file: str = "clip_text.onnx"
     size: int = 224

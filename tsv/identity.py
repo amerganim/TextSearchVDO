@@ -199,15 +199,23 @@ def store_tracklet_embedding(
     kind: EmbeddingKind,
     vector: np.ndarray,
     n_samples: int = 1,
+    model: str | None = None,
 ) -> None:
+    """Store one vector, recording which weights produced it.
+
+    `model` is not decoration. A vector is only comparable to another from the
+    same model, and the numbers do not say which one that was, so an index
+    whose model changed has to be able to tell its old vectors from its new
+    ones rather than averaging nonsense across both.
+    """
     vector = normalise(vector)
     conn.execute(
-        """INSERT INTO tracklet_embeddings(tracklet_id, kind, dim, vector, n_samples)
-           VALUES (?,?,?,?,?)
+        """INSERT INTO tracklet_embeddings(tracklet_id, kind, dim, vector, n_samples, model)
+           VALUES (?,?,?,?,?,?)
            ON CONFLICT(tracklet_id, kind) DO UPDATE SET
                dim = excluded.dim, vector = excluded.vector,
-               n_samples = excluded.n_samples""",
-        (tracklet_id, kind, len(vector), to_blob(vector), n_samples),
+               n_samples = excluded.n_samples, model = excluded.model""",
+        (tracklet_id, kind, len(vector), to_blob(vector), n_samples, model),
     )
 
 
@@ -232,15 +240,18 @@ def enroll_tracklet(
     for kind in kinds:
         stored = STORED_KIND[kind]
         row = conn.execute(
-            "SELECT dim, vector FROM tracklet_embeddings WHERE tracklet_id = ? AND kind = ?",
+            "SELECT dim, vector, model FROM tracklet_embeddings "
+            "WHERE tracklet_id = ? AND kind = ?",
             (tracklet_id, stored),
         ).fetchone()
         if row is None:
             continue
         conn.execute(
-            """INSERT INTO identity_embeddings(identity_id, tracklet_id, kind, dim, vector, created_at)
-               VALUES (?,?,?,?,?,?)""",
-            (identity.id, tracklet_id, stored, row["dim"], row["vector"], time.time()),
+            """INSERT INTO identity_embeddings(identity_id, tracklet_id, kind, dim, vector,
+                                               created_at, model)
+               VALUES (?,?,?,?,?,?,?)""",
+            (identity.id, tracklet_id, stored, row["dim"], row["vector"],
+             time.time(), row["model"]),
         )
         added.append(kind)
 
@@ -253,13 +264,23 @@ def enroll_tracklet(
     return identity, added
 
 
-def load_gallery(conn: sqlite3.Connection, kind: EmbeddingKind) -> tuple[np.ndarray, list[int], dict[int, str]]:
-    """Every confirmed vector of one kind, as a matrix."""
+def load_gallery(
+    conn: sqlite3.Connection,
+    kind: EmbeddingKind,
+    model: str | None = None,
+) -> tuple[np.ndarray, list[int], dict[int, str]]:
+    """Every confirmed vector of one kind, as a matrix.
+
+    Restricted to one model when given. Faces enrolled against different
+    weights are not a bigger gallery, they are two galleries in a trench coat,
+    and matching across them is meaningless in a way no error would reveal.
+    """
     rows = conn.execute(
         """SELECT e.identity_id, e.dim, e.vector, i.name
            FROM identity_embeddings e JOIN identities i ON i.id = e.identity_id
-           WHERE e.kind = ? ORDER BY e.identity_id""",
-        (STORED_KIND[kind],),
+           WHERE e.kind = ? AND (? IS NULL OR e.model = ?)
+           ORDER BY e.identity_id""",
+        (STORED_KIND[kind], model, model),
     ).fetchall()
     if not rows:
         return np.empty((0, 0), dtype=np.float32), [], {}
@@ -315,18 +336,24 @@ def assign_identities(
     threshold: float | None = None,
     margin: float | None = None,
     reassign: bool = False,
+    model: str | None = None,
 ) -> AssignSummary:
     """Name every tracklet that has an embedding and a confident match.
 
     Manual enrolments are never overwritten: a person's own labelling outranks
     anything matching decides, and `reassign` only revisits automatic ones.
+
+    Both sides are held to one `model` when given. Comparing a vector from one
+    set of weights against a gallery built from another is not a weaker match,
+    it is an arbitrary number, and the thresholds below would treat it as
+    evidence.
     """
-    gallery, owners, names = load_gallery(conn, kind)
+    gallery, owners, names = load_gallery(conn, kind, model=model)
     summary = AssignSummary()
     if gallery.size == 0:
         return summary
 
-    where = "WHERE te.kind = ? AND (t.identity_id IS NULL"
+    where = "WHERE te.kind = ? AND (? IS NULL OR te.model = ?) AND (t.identity_id IS NULL"
     where += " OR t.identity_source = 'auto')" if reassign else ")"
     # Appearance vectors describe whatever was cropped, so without this a car
     # can score above the threshold against a person's gallery and be given
@@ -338,7 +365,7 @@ def assign_identities(
         f"""SELECT t.id, te.dim, te.vector
             FROM tracklets t JOIN tracklet_embeddings te ON te.tracklet_id = t.id
             {where}""",
-        (STORED_KIND[kind],),
+        (STORED_KIND[kind], model, model),
     ).fetchall()
 
     updates = []

@@ -202,6 +202,7 @@ def semantic_ranking(
     query_vector: np.ndarray,
     allowed: Sequence[int] | None = None,
     limit: int = 200,
+    model: str | None = None,
 ) -> list[tuple[int, float, int | None]]:
     """Segments by CLIP similarity, as (segment_id, score, tracklet_id).
 
@@ -209,13 +210,21 @@ def semantic_ranking(
     jacket is a property of the crop, not of the whole frame, so searching only
     scene embeddings misses exactly the queries this is for; a segment takes
     the best score from either source.
+
+    `model` restricts both to vectors from the same weights as the query. Left
+    unfiltered, an index part-way through a model change scores the query
+    against whatever it finds: a mismatch in width raises, but two 512-wide
+    models - ViT-B/32 and ViT-B/16, say - produce a plausible-looking number
+    with no meaning behind it, which ranks and is believed.
     """
     query = normalise(query_vector)
     allow = set(allowed) if allowed is not None else None
     best: dict[int, tuple[float, int | None]] = {}
 
     for row in conn.execute(
-        "SELECT segment_id, dim, vector FROM segment_embeddings WHERE kind = 'clip'"
+        "SELECT segment_id, dim, vector FROM segment_embeddings "
+        "WHERE kind = 'clip' AND (? IS NULL OR model = ?)",
+        (model, model),
     ):
         sid = int(row["segment_id"])
         if allow is not None and sid not in allow:
@@ -227,7 +236,8 @@ def semantic_ranking(
     for row in conn.execute(
         """SELECT te.tracklet_id, te.dim, te.vector, t.segment_id
            FROM tracklet_embeddings te JOIN tracklets t ON t.id = te.tracklet_id
-           WHERE te.kind = 'clip'"""
+           WHERE te.kind = 'clip' AND (? IS NULL OR te.model = ?)""",
+        (model, model),
     ):
         sid = int(row["segment_id"])
         if allow is not None and sid not in allow:
@@ -307,6 +317,7 @@ def search(
     filters: SearchFilters | None = None,
     limit: int = 40,
     min_similarity: float | None = None,
+    model: str | None = None,
 ) -> list[SearchHit]:
     """Rank segments for a query, under whatever filters are in force.
 
@@ -323,7 +334,7 @@ def search(
         return []
 
     semantic = (
-        semantic_ranking(conn, query_vector, allowed)
+        semantic_ranking(conn, query_vector, allowed, model=model)
         if query_vector is not None
         else []
     )

@@ -233,14 +233,17 @@ def _write_tracklets(
                 # so averaging their views is strictly better evidence than
                 # any single frame, which may be a blink or a turn.
                 store_tracklet_embedding(
-                    conn, tracklet_id, "face", aggregate(vectors), n_samples=len(vectors)
+                    conn, tracklet_id, "face", aggregate(vectors),
+                    n_samples=len(vectors), model=cfg.face.name,
                 )
                 n_faces += 1
 
         if clip is not None and clip_crops is not None:
             crop = clip_crops.get(track.track_id)
             if crop is not None and crop.size:
-                store_tracklet_embedding(conn, tracklet_id, "clip", clip.embed_image(crop))
+                store_tracklet_embedding(
+                    conn, tracklet_id, "clip", clip.embed_image(crop), model=cfg.clip.name
+                )
                 n_embedded += 1
 
     if clip is not None and scene_frame is not None and scene_frame.size:
@@ -248,11 +251,13 @@ def _write_tracklets(
         # driveway" is a property of the frame, not of any one crop.
         vector = clip.embed_image(scene_frame)
         conn.execute(
-            """INSERT INTO segment_embeddings(segment_id, kind, dim, vector)
-               VALUES (?,?,?,?)
+            """INSERT INTO segment_embeddings(segment_id, kind, dim, vector, model)
+               VALUES (?,?,?,?,?)
                ON CONFLICT(segment_id, kind) DO UPDATE SET
-                   dim = excluded.dim, vector = excluded.vector""",
-            (segment["id"], "clip", len(vector), vector.astype(np.float32).tobytes()),
+                   dim = excluded.dim, vector = excluded.vector,
+                   model = excluded.model""",
+            (segment["id"], "clip", len(vector), vector.astype(np.float32).tobytes(),
+             cfg.clip.name),
         )
         n_embedded += 1
 

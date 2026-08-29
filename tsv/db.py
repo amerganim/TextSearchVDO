@@ -11,7 +11,7 @@ import sqlite3
 import threading
 from pathlib import Path
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_info (
@@ -247,6 +247,21 @@ def _backfill_fingerprints(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+# What produced the vectors in an index built before they were labelled.
+# There was one choice per kind at the time, so this is a record, not a guess.
+_ORIGINAL_MODELS = {"clip": "clip-vit-b-32", "face": "buffalo_s"}
+
+
+def _backfill_embedding_models(conn: sqlite3.Connection) -> None:
+    for table in ("segment_embeddings", "tracklet_embeddings", "identity_embeddings"):
+        for kind, name in _ORIGINAL_MODELS.items():
+            conn.execute(
+                f"UPDATE {table} SET model = ? WHERE model IS NULL AND kind = ?",
+                (name, kind),
+            )
+    conn.commit()
+
+
 def init(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
 
@@ -272,11 +287,22 @@ def init(conn: sqlite3.Connection) -> None:
     # library entry, and the totals on screen then counted it twice.
     ensure_column(conn, "videos", "fingerprint", "TEXT")
 
+    # Which weights produced each vector. A stored embedding is only
+    # comparable to one from the same model, and nothing about the numbers
+    # says which that was: CLIP ViT-B/32 and ViT-B/16 are both 512-wide and
+    # completely incompatible, so mixing them raises no error and quietly
+    # returns nonsense. Rows written before this column existed came from the
+    # only models that were on offer, which is what the backfill records.
+    ensure_column(conn, "segment_embeddings", "model", "TEXT")
+    ensure_column(conn, "tracklet_embeddings", "model", "TEXT")
+    ensure_column(conn, "identity_embeddings", "model", "TEXT")
+
     ensure_column(conn, "tracklets", "caption", "TEXT")
     ensure_column(conn, "tracklets", "caption_task", "TEXT")
     ensure_column(conn, "tracklets", "captioned_at", "REAL")
 
     _backfill_fingerprints(conn)
+    _backfill_embedding_models(conn)
 
     row = conn.execute("SELECT version FROM schema_info").fetchone()
     if row is None:

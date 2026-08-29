@@ -469,6 +469,7 @@ def ask(
     today: date | None = None,
     limit: int = 20,
     min_similarity: float | None = None,
+    model: str | None = None,
 ) -> AskResult:
     """Answer a question, ranking as a fallback.
 
@@ -498,5 +499,6 @@ def ask(
             filters=plan.filters if plan.grounded else SearchFilters(),
             limit=limit,
             min_similarity=min_similarity,
+            model=model,
         )
     return result

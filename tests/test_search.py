@@ -200,6 +200,41 @@ def test_semantic_ranking_respects_the_allowed_set(conn):
     assert {sid for sid, _, _ in ranked} == {2, 3}
 
 
+def test_vectors_from_another_model_are_not_searched(conn):
+    """The failure this guards against is silent, not loud.
+
+    A width mismatch raises and gets noticed. CLIP ViT-B/32 and ViT-B/16 are
+    both 512-wide, so mixing them produces a perfectly ordinary-looking cosine
+    score with nothing behind it - which ranks, and is believed. Once a user
+    can choose their own model, "the index was built by something else" stops
+    being hypothetical.
+    """
+    for sid, name in ((1, "clip-vit-b-32"), (2, "clip-vit-b-16"), (3, None)):
+        conn.execute(
+            "INSERT INTO segment_embeddings(segment_id, kind, dim, vector, model) "
+            "VALUES (?,?,?,?,?)",
+            (sid, "clip", DIM, direction(1).tobytes(), name),
+        )
+    conn.commit()
+
+    ranked = semantic_ranking(conn, direction(1), model="clip-vit-b-32")
+    assert {sid for sid, _, _ in ranked} == {1}
+
+    # Unfiltered is still the old behaviour, for callers that have not been
+    # told which model they are asking about.
+    assert len(semantic_ranking(conn, direction(1))) == 3
+
+
+def test_an_object_vector_from_another_model_is_ignored_too(conn):
+    """Crops are the half that actually answers "a person in a red jacket"."""
+    add_tracklet(conn, 7, 2)
+    store_tracklet_embedding(conn, 7, "clip", direction(9), model="clip-vit-b-16")
+    conn.commit()
+
+    assert semantic_ranking(conn, direction(9), model="clip-vit-b-32") == []
+    assert semantic_ranking(conn, direction(9), model="clip-vit-b-16")[0][2] == 7
+
+
 # ---------- fusion ----------
 
 def test_rrf_rewards_agreement_between_signals():

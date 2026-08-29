@@ -227,6 +227,30 @@ def test_rejecting_one_sighting_leaves_the_others_named(conn):
     assert len(listed) == 1 and listed[0]["n_sightings"] == 1
 
 
+def test_a_gallery_never_mixes_two_sets_of_face_weights(conn):
+    """Enrolling under one model and matching under another is not a weak
+    match, it is an arbitrary number that the thresholds treat as evidence.
+
+    This becomes reachable the moment somebody with a better machine picks a
+    larger face model: the faces they already named were embedded by the old
+    one.
+    """
+    add_tracklet(conn, 1, person_vector(1))
+    conn.execute("UPDATE tracklet_embeddings SET model = 'buffalo_s' WHERE tracklet_id = 1")
+    enroll_tracklet(conn, 1, "Rafi")
+
+    assert load_gallery(conn, "face", model="buffalo_s")[0].shape == (1, DIM)
+    assert load_gallery(conn, "face", model="buffalo_l")[0].size == 0
+
+    add_tracklet(conn, 2, person_vector(1) + 0.01 * RNG.normal(size=DIM))
+    conn.execute("UPDATE tracklet_embeddings SET model = 'buffalo_l' WHERE tracklet_id = 2")
+    conn.commit()
+
+    # The near-identical vector is only a match under its own weights.
+    assert assign_identities(conn, "face", model="buffalo_l").n_assigned == 0
+    assert assign_identities(conn, "face", model="buffalo_s").n_assigned == 0
+
+
 # ---------- matching ----------
 
 def _gallery(conn):

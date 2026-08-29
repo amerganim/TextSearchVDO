@@ -190,6 +190,17 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
             "n_embedded": conn.execute(
                 "SELECT COUNT(*) AS n FROM segment_embeddings WHERE kind = 'clip'"
             ).fetchone()["n"],
+            # Which weights the search index was built with, and how much of
+            # it was built with something else. Changing the model does not
+            # corrupt anything - the old vectors are simply invisible to
+            # search until they are rebuilt - but the app has to be able to
+            # say so rather than quietly returning less than it used to.
+            "search_model": cfg.clip.name,
+            "n_stale_embeddings": conn.execute(
+                "SELECT COUNT(*) AS n FROM segment_embeddings "
+                "WHERE kind = 'clip' AND model IS NOT ?",
+                (cfg.clip.name,),
+            ).fetchone()["n"],
             "semantic_ready": cfg.has_clip_models,
             "detector_ready": cfg.detect_model_path.is_file(),
             "caption_ready": cfg.has_caption_model,
@@ -403,7 +414,7 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
             min_similarity if min_similarity is not None else cfg.clip.min_similarity
         )
         hits = run_search(conn, text=q, query_vector=vector, filters=filters,
-                          limit=limit, min_similarity=floor)
+                          limit=limit, min_similarity=floor, model=cfg.clip.name)
 
         return {
             "query": q,
@@ -523,7 +534,8 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
             min_similarity if min_similarity is not None else cfg.clip.min_similarity
         )
         result = run_ask(
-            conn, q, embed_text=_query_vector, limit=limit, min_similarity=floor
+            conn, q, embed_text=_query_vector, limit=limit, min_similarity=floor,
+            model=cfg.clip.name,
         )
         plan = result.plan
 
@@ -628,7 +640,10 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
         margin: float | None = None,
         reassign: bool = False,
     ) -> dict:
-        summary = assign_identities(conn, kind, threshold, margin, reassign)
+        summary = assign_identities(
+            conn, kind, threshold, margin, reassign,
+            model=cfg.face.name if kind == "face" else None,
+        )
         return {
             "kind": kind,
             "considered": summary.n_considered,
