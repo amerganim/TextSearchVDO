@@ -461,6 +461,7 @@ def analyze_all(
         iou_threshold=cfg.detect.iou_threshold,
         keep_classes=classes,
         force_backend=cfg.detect.force_backend,
+        family=cfg.detect.family,
     )
     if face is None and with_faces:
         face = build_face_pipeline(cfg)

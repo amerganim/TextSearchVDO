@@ -240,21 +240,61 @@ model changed.
 
 | Model | File | Size | Job | Runs on |
 |---|---|---:|---|---|
-| **YOLO11n** | `yolo11n.onnx` | 10.7 MB | Find objects — people, vehicles, animals, bags | Intel iGPU |
+| **YOLO11n** or **YOLOX-tiny** | `yolo11n.onnx` / `yolox_tiny.onnx` | 11–20 MB | Find objects — people, vehicles, animals, bags | Intel iGPU |
 | **SCRFD** `det_500m` | `det_500m.onnx` | 2.5 MB | Find faces and their 5 landmarks | CPU |
 | **ArcFace** `w600k_mbf` | `w600k_mbf.onnx` | 13.6 MB | 512-d face vector for identity | CPU |
 | **CLIP ViT-B/32** image | `clip_image.onnx` | 351 MB | Turn frames and crops into meaning vectors | CPU |
 | **CLIP ViT-B/32** text | `clip_text.onnx` | 254 MB | Turn your words into the same space | CPU |
 | **Florence-2-base-ft** | `florence2/` (4 graphs) | 275 MB | Describe what a person is doing | CPU |
 
-Provenance, and how each is obtained:
+Provenance, licence, and how each is obtained:
 
-| Model | Comes from | Fetched by |
+| Model | Comes from | Licence | Fetched by |
+|---|---|---|---|
+| YOLO11n | Ultralytics checkpoint, exported to ONNX | **AGPL-3.0** | `tools/export_model.py` |
+| YOLOX-tiny | YOLOX release, already ONNX | Apache-2.0 | `tools/fetch_detector.py` |
+| SCRFD + ArcFace | InsightFace `buffalo_s` pack | **research only** | `tools/fetch_face_models.py` |
+| CLIP | `openai/clip-vit-base-patch32` via transformers | MIT | `tools/export_clip.py` |
+| Florence-2 | `onnx-community/Florence-2-base-ft`, int8 | MIT | `tools/fetch_caption_model.py` |
+
+### Choosing a detector, and why the licence decides it
+
+Ultralytics YOLO11 is AGPL-3.0, whose obligations extend to any application
+distributed with it. That makes it the single biggest obstacle to shipping
+this as a product, so YOLOX — Apache-2.0 — is the alternative, and it needs no
+export step at all because its ONNX graphs are published directly.
+
+The two agree closely. On one real frame both found the same person in the
+same box to within a few pixels, at 0.918 and 0.880. Over a full eight-minute
+recording YOLO11n produced five people and one spurious bird; YOLOX-tiny
+produced seven people and no bird, twelve seconds against fourteen.
+
+```bash
+python -m tsv setup --detector yolox-tiny
+```
+
+They are not, however, interchangeable in code, and every difference between
+them fails *silently*:
+
+| | YOLO11 | YOLOX |
 |---|---|---|
-| YOLO11n | Ultralytics checkpoint, exported to ONNX | `tools/export_model.py` |
-| SCRFD + ArcFace | InsightFace `buffalo_s` pack | `tools/fetch_face_models.py` |
-| CLIP | `openai/clip-vit-base-patch32` via transformers | `tools/export_clip.py` |
-| Florence-2 | `onnx-community/Florence-2-base-ft`, int8 | `tools/fetch_caption_model.py` |
+| Values per anchor | 84 (4 box + 80 classes) | 85 (4 box + objectness + 80 classes) |
+| Channel order | RGB | **BGR** |
+| Value range | 0..1 | **0..255** |
+| Padding | centred | **bottom-right** |
+| Box decoding | in the graph | **grid offsets and log sizes, decoded here** |
+| Input size | 640 | 416 (tiny) |
+
+Feed YOLOX a 0..1 tensor and it returns an empty frame — which looks exactly
+like a frame with nothing in it, not like an error. So `models/detect.py`
+holds preprocessing as a property of the *family*, picks the family from the
+filename (it has to: preprocessing is chosen before the graph has run), and
+then checks that guess against the real output and raises if they disagree.
+The input size comes from the graph rather than from configuration, because
+these exports are static and the file already knows.
+
+`python -m tsv hardware` lists what fits this machine, what is running now,
+and what blocks a sale.
 
 **None of these are runtime dependencies.** `torch`, `ultralytics`,
 `transformers` and `insightface` are used once, from a throwaway

@@ -41,11 +41,51 @@ class Component:
     command: tuple[str, ...]
     # Without it the app still runs, just with less of it.
     optional: bool = False
+    # False for anything that is a plain download. The export environment
+    # carries torch and costs a couple of gigabytes, so building it for a
+    # component that does not need it is pure waste - and with YOLOX chosen as
+    # the detector, a detector-only setup needs no toolchain whatsoever.
+    needs_export_env: bool = True
 
 
 def _export_python() -> Path:
     name = "python.exe" if sys.platform == "win32" else "python"
     return EXPORT_VENV / ("Scripts" if sys.platform == "win32" else "bin") / name
+
+
+# The detector is the one stage with a choice that changes what can be
+# shipped: YOLO11 is AGPL-3.0, YOLOX is Apache-2.0. See tsv.catalogue.
+DETECTORS: dict[str, Component] = {
+    "yolo11n": Component(
+        key="detector",
+        title="Object detection (YOLO11n)",
+        why="finds people, vehicles and animals; without it a video is only motion",
+        approx_mb=11,
+        ready=lambda cfg: (cfg.model_dir / "yolo11n.onnx").is_file(),
+        packages=("ultralytics", "onnx", "onnxslim"),
+        command=("tools/export_model.py", "--out"),
+    ),
+    "yolox-tiny": Component(
+        key="detector",
+        title="Object detection (YOLOX-tiny)",
+        why="finds people, vehicles and animals; Apache-2.0, so it can be shipped",
+        approx_mb=20,
+        ready=lambda cfg: (cfg.model_dir / "yolox_tiny.onnx").is_file(),
+        packages=(),
+        command=("tools/fetch_detector.py", "--model", "yolox-tiny", "--out"),
+        needs_export_env=False,
+    ),
+    "yolox-s": Component(
+        key="detector",
+        title="Object detection (YOLOX-s)",
+        why="a larger shippable detector; better on small and distant figures",
+        approx_mb=35,
+        ready=lambda cfg: (cfg.model_dir / "yolox_s.onnx").is_file(),
+        packages=(),
+        command=("tools/fetch_detector.py", "--model", "yolox-s", "--out"),
+        needs_export_env=False,
+    ),
+}
 
 
 COMPONENTS: tuple[Component, ...] = (
@@ -103,8 +143,11 @@ class SetupReport:
         return not self.failed
 
 
-def status(cfg: Config) -> list[tuple[Component, bool]]:
-    return [(component, component.ready(cfg)) for component in COMPONENTS]
+def status(cfg: Config, detector: str | None = None) -> list[tuple[Component, bool]]:
+    return [
+        (component, component.ready(cfg))
+        for component in components_for(detector)
+    ]
 
 
 def _run(command: list[str], label: str) -> tuple[bool, str]:
@@ -138,17 +181,28 @@ def ensure_export_env(log: Callable[[str], None]) -> tuple[bool, str]:
     )
 
 
+def components_for(detector: str | None = None) -> tuple[Component, ...]:
+    """The component list, with the chosen detector swapped in."""
+    if not detector or detector not in DETECTORS:
+        return COMPONENTS
+    return tuple(
+        DETECTORS[detector] if c.key == "detector" else c for c in COMPONENTS
+    )
+
+
 def run_setup(
     cfg: Config,
     only: set[str] | None = None,
     log: Callable[[str], None] = print,
     keep_export_env: bool = True,
+    detector: str | None = None,
 ) -> SetupReport:
     """Fetch or build every model that is not already present."""
     started = time.time()
     report = SetupReport()
 
-    wanted = [c for c in COMPONENTS if only is None or c.key in only]
+    catalogue = components_for(detector)
+    wanted = [c for c in catalogue if only is None or c.key in only]
     missing = [c for c in wanted if not c.ready(cfg)]
     report.present = [c.title for c in wanted if c.ready(cfg)]
 
@@ -161,25 +215,35 @@ def run_setup(
     total_mb = sum(c.approx_mb for c in missing)
     log(f"\n{len(missing)} to fetch, roughly {total_mb} MB plus a one-off toolchain")
 
-    ok, error = ensure_export_env(log)
-    if not ok:
-        report.failed.append(("export environment", error))
-        report.elapsed = time.time() - started
-        return report
+    # Only pay for the toolchain if something actually needs building.
+    export_python = ""
+    if any(c.needs_export_env for c in missing):
+        ok, error = ensure_export_env(log)
+        if not ok:
+            report.failed.append(("export environment", error))
+            report.elapsed = time.time() - started
+            return report
 
-    python = str(_export_python())
-    packages = sorted({p for c in missing for p in c.packages})
-    log(f"installing build tools: {', '.join(packages)}")
-    ok, error = _run([python, "-m", "pip", "install", "--quiet", *packages], "installing build tools")
-    if not ok:
-        report.failed.append(("build tools", error))
-        report.elapsed = time.time() - started
-        return report
+        export_python = str(_export_python())
+        packages = sorted({p for c in missing if c.needs_export_env for p in c.packages})
+        if packages:
+            log(f"installing build tools: {', '.join(packages)}")
+            ok, error = _run(
+                [export_python, "-m", "pip", "install", "--quiet", *packages],
+                "installing build tools",
+            )
+            if not ok:
+                report.failed.append(("build tools", error))
+                report.elapsed = time.time() - started
+                return report
+    else:
+        log("nothing here needs the export toolchain")
 
     cfg.model_dir.mkdir(parents=True, exist_ok=True)
     for component in missing:
         log(f"  build   {component.title} (~{component.approx_mb} MB)")
         script, *flags = component.command
+        python = export_python if component.needs_export_env else sys.executable
         ok, error = _run([python, script, *flags, str(cfg.model_dir)], component.title)
 
         if ok and component.ready(cfg):
@@ -191,7 +255,7 @@ def run_setup(
             )
             log(f"  FAILED  {component.title}: {report.failed[-1][1]}")
 
-    if not keep_export_env and report.ok:
+    if not keep_export_env and report.ok and export_python:
         log(f"removing {EXPORT_VENV}")
         shutil.rmtree(EXPORT_VENV, ignore_errors=True)
 

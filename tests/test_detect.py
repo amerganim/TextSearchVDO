@@ -133,3 +133,121 @@ def test_decode_of_empty_output():
 
 def test_detection_label_lookup():
     assert Detection(0, 0, 1, 1, 0.9, 0).label == "person"
+
+
+# ---------- model families ----------
+#
+# YOLOX matters because it is Apache-2.0 where YOLO11 is AGPL-3.0, which is
+# the difference between something that can be sold and something that cannot.
+# Almost every difference between the two families fails *silently* - a wrong
+# channel order or value range returns an empty frame, which is
+# indistinguishable from a frame with nothing in it.
+
+from tsv.models.detect import (  # noqa: E402
+    FAMILIES, YOLO11, YOLOX, Detector, anchor_grid, family_for,
+)
+
+
+def test_the_two_families_disagree_about_everything_that_matters():
+    """Documents why this is not a one-column change."""
+    assert YOLOX.n_attributes == YOLO11.n_attributes + 1     # objectness
+    assert YOLOX.has_objectness and not YOLO11.has_objectness
+    assert YOLOX.bgr and not YOLO11.bgr
+    assert YOLO11.scale_to_unit and not YOLOX.scale_to_unit
+    assert YOLOX.pad == "corner" and YOLO11.pad == "center"
+    assert YOLOX.grid_decode and not YOLO11.grid_decode
+
+
+def test_the_family_is_read_from_the_filename():
+    """It has to be: preprocessing is chosen before the graph has ever run."""
+    assert family_for("yolox_tiny.onnx") is YOLOX
+    assert family_for("data/models/yolox_s.onnx") is YOLOX
+    assert family_for("yolo11n.onnx") is YOLO11
+    assert family_for("something_unknown.onnx") is YOLO11
+    assert family_for("yolo11n.onnx", "yolox") is YOLOX
+    with pytest.raises(ValueError):
+        family_for("yolo11n.onnx", "nonsense")
+
+
+def test_corner_padding_puts_the_image_where_yolox_expects_it():
+    padded, meta = letterbox(_frame(1280, 720), size=640, pad="corner")
+    assert padded.shape == (640, 640, 3)
+    assert meta.pad_x == 0 and meta.pad_y == 0
+    # The bottom strip is padding, the top row is image.
+    assert (padded[-1] == 114).all()
+
+
+def test_the_input_tensor_follows_the_family_not_the_caller():
+    """Both of these are silent failures when wrong.
+
+    A YOLOX graph handed a 0..1 tensor detects nothing whatsoever - measured,
+    0.000 against 0.886 for the same frame correctly prepared.
+    """
+    frame = np.zeros((64, 64, 3), dtype=np.uint8)
+    frame[..., 0] = 200        # red channel, in an RGB frame
+
+    yolo = to_input_tensor(frame, YOLO11)
+    assert yolo.max() <= 1.0
+    assert yolo[0, 0].max() > 0.5, "RGB order lost: red should be channel 0"
+
+    yolox = to_input_tensor(frame, YOLOX)
+    assert yolox.max() > 1.0, "YOLOX weights expect 0..255, not 0..1"
+    assert yolox[0, 2].max() > 128, "BGR order lost: red should be channel 2"
+
+
+def test_the_anchor_grid_matches_the_published_graph():
+    """3549 rows at 416px is exactly what YOLOX-tiny returns."""
+    grid, strides = anchor_grid(416, (8, 16, 32))
+    assert grid.shape == (3549, 2)
+    assert strides.shape == (3549, 1)
+    assert set(np.unique(strides)) == {8, 16, 32}
+    # Stride 8 first, and its first cell is the origin.
+    assert strides[0] == 8 and tuple(grid[0]) == (0.0, 0.0)
+    assert strides[-1] == 32
+
+    at_640, _ = anchor_grid(640, (8, 16, 32))
+    assert at_640.shape == (8400, 2)      # what YOLO11 emits at 640
+
+
+def test_grid_decoding_turns_offsets_into_pixels():
+    """Without it every box lands near the origin and suppresses to nothing."""
+    n = 3549
+    raw = np.zeros((1, n, 5 + len(COCO_CLASSES)), dtype=np.float32)
+    grid, strides = anchor_grid(416, (8, 16, 32))
+
+    # One object at the centre of the last stride-32 cell, half a cell wide.
+    target = n - 1
+    raw[0, target, :2] = 0.5
+    raw[0, target, 2:4] = np.log(0.5)
+    raw[0, target, 4] = 0.9            # objectness
+    raw[0, target, 5] = 0.9            # person
+
+    meta = letterbox(_frame(416, 416), size=416, pad="corner")[1]
+    found = decode(raw, meta, conf_threshold=0.5, family=YOLOX, input_size=416)
+
+    assert len(found) == 1
+    assert found[0].label == "person"
+    assert found[0].score == pytest.approx(0.81, abs=0.01)   # 0.9 * 0.9
+
+    expected_cx = (grid[target, 0] + 0.5) * strides[target, 0]
+    assert (found[0].x1 + found[0].x2) / 2 == pytest.approx(expected_cx, abs=1.0)
+    assert (found[0].x2 - found[0].x1) == pytest.approx(0.5 * 32, abs=1.0)
+
+
+def test_objectness_gates_the_class_score():
+    """A class column alone puts confident nonsense on every empty wall."""
+    n = 3549
+    raw = np.zeros((1, n, 5 + len(COCO_CLASSES)), dtype=np.float32)
+    raw[0, 0, 4] = 0.02        # nothing here
+    raw[0, 0, 5] = 0.99        # but "person" if you ignore that
+    meta = letterbox(_frame(416, 416), size=416, pad="corner")[1]
+
+    assert decode(raw, meta, conf_threshold=0.25, family=YOLOX, input_size=416) == []
+
+
+def test_an_anchor_count_that_cannot_be_a_grid_is_refused():
+    """Better a loud error than boxes computed against the wrong strides."""
+    raw = np.zeros((1, 999, 5 + len(COCO_CLASSES)), dtype=np.float32)
+    meta = letterbox(_frame(416, 416), size=416, pad="corner")[1]
+    with pytest.raises(ValueError, match="anchors"):
+        decode(raw, meta, family=YOLOX, input_size=416)

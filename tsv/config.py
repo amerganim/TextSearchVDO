@@ -96,6 +96,14 @@ class DetectConfig:
     """Phase 1: what to run the detector on, and how hard."""
 
     model_file: str = "yolo11n.onnx"
+    # Which lineage the file belongs to, deciding channel order, value range
+    # and padding - all of which fail silently when wrong. None reads it from
+    # the filename, which is right for every model this project installs; set
+    # it explicitly for a graph named something else.
+    family: str | None = None
+    # A starting point only. These exports are static and carry their own
+    # size - YOLOX-tiny is 416 - so the detector reads it from the graph and
+    # falls back to this.
     input_size: int = 640
     # Frames per second sampled for detection. Higher costs linearly and buys
     # tracking stability; 4 keeps a walking person's boxes overlapping enough

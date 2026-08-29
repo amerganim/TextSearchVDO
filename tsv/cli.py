@@ -9,6 +9,7 @@ from pathlib import Path
 from tsv import db
 from tsv.config import DEFAULT, Config
 from tsv.ingest import IngestResult, ingest_path
+from tsv.setup import DETECTORS
 
 
 def _hms(seconds: float) -> str:
@@ -485,17 +486,17 @@ def _wrap(text: str, width: int) -> list[str]:
 
 def cmd_setup(args: argparse.Namespace) -> int:
     """Fetch or build every model the app can use."""
-    from tsv.setup import COMPONENTS, run_setup, status
+    from tsv.setup import components_for, run_setup, status
 
     cfg = _config(args)
 
     if args.check:
         print(f"models in {cfg.model_dir}")
-        for component, ready in status(cfg):
+        for component, ready in status(cfg, detector=args.detector):
             mark = "yes" if ready else "no "
             tail = "" if ready else f"  ({component.why})"
             print(f"  [{mark}] {component.title}{tail}")
-        absent = [c for c, ready in status(cfg) if not ready]
+        absent = [c for c, ready in status(cfg, detector=args.detector) if not ready]
         print()
         print("everything is present." if not absent
               else f"{len(absent)} missing. Run:  python -m tsv setup")
@@ -503,7 +504,10 @@ def cmd_setup(args: argparse.Namespace) -> int:
 
     only = set(args.only) if args.only else None
     print(f"setting up into {cfg.model_dir}")
-    report = run_setup(cfg, only=only, keep_export_env=not args.clean)
+    if args.detector:
+        print(f"detector: {args.detector}")
+    report = run_setup(cfg, only=only, keep_export_env=not args.clean,
+                       detector=args.detector)
 
     print()
     for title in report.installed:
@@ -514,7 +518,7 @@ def cmd_setup(args: argparse.Namespace) -> int:
     # Re-check everything, not just what this run touched: with --only, a
     # successful run can still leave the app half installed, and saying
     # "ready" then would be false.
-    remaining = [c for c, is_ready in status(cfg) if not is_ready]
+    remaining = [c for c, is_ready in status(cfg, detector=args.detector) if not is_ready]
     ready_now = len(COMPONENTS) - len(remaining)
     print(f"\n{ready_now} of {len(COMPONENTS)} ready in {report.elapsed:.0f}s")
 
@@ -706,6 +710,9 @@ def main(argv: list[str] | None = None) -> int:
                          help="limit to certain parts")
     p_setup.add_argument("--clean", action="store_true",
                          help="delete the export environment afterwards")
+    p_setup.add_argument("--detector", choices=sorted(DETECTORS),
+                         help="which detector to install; the yolox ones are "
+                              "Apache-2.0 and need no toolchain, yolo11n is AGPL-3.0")
     p_setup.set_defaults(func=cmd_setup)
 
     p_hardware = sub.add_parser(

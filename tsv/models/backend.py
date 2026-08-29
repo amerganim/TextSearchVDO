@@ -88,6 +88,12 @@ class BackendInfo:
 class Backend(Protocol):
     info: BackendInfo
     input_names: list[str]
+    # The first input's shape as the graph declares it, with None for any
+    # dynamic axis. Worth having because a static export decides its own input
+    # size - YOLOX-tiny is 416, YOLO11 is 640 - and feeding the wrong one is a
+    # hard failure at inference rather than something a config default can be
+    # trusted to get right.
+    input_shape: tuple[int | None, ...]
 
     def run(self, inputs: dict[str, np.ndarray]) -> list[np.ndarray]: ...
 
@@ -116,7 +122,11 @@ class OnnxRuntimeBackend:
         self._session = ort.InferenceSession(
             str(model_path), sess_options=options, providers=[provider]
         )
-        self.input_names = [i.name for i in self._session.get_inputs()]
+        inputs = self._session.get_inputs()
+        self.input_names = [i.name for i in inputs]
+        self.input_shape = tuple(
+            d if isinstance(d, int) else None for d in (inputs[0].shape if inputs else ())
+        )
         self._output_names = [o.name for o in self._session.get_outputs()]
         self.info = BackendInfo("onnxruntime", device)
 
@@ -143,6 +153,12 @@ class OpenVINOBackend:
         self._request = compiled.create_infer_request()
         self._compiled = compiled
         self.input_names = [next(iter(p.names)) for p in compiled.inputs]
+        self.input_shape = ()
+        if compiled.inputs:
+            shape = compiled.inputs[0].partial_shape
+            self.input_shape = tuple(
+                d.get_length() if d.is_static else None for d in shape
+            )
         self.info = BackendInfo("openvino", device)
 
     def run(self, inputs: dict[str, np.ndarray]) -> list[np.ndarray]:

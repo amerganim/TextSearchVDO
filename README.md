@@ -49,11 +49,33 @@ step that needs the internet, downloads roughly a gigabyte, and takes a few
 minutes.
 
 It builds a throwaway `.venv-export` to do it. That environment carries torch,
-and it exists so the *running* application does not: two of the four model sets
-have to be exported rather than downloaded, because Ultralytics publishes YOLO11
-only as PyTorch checkpoints and the CLIP ONNX on the hub is a single fused graph
-rather than the separate encoders this runtime uses. Pass `--clean` to delete it
-afterwards.
+and it exists so the *running* application does not: some model sets have to be
+exported rather than downloaded, because the CLIP ONNX on the hub is a single
+fused graph rather than the separate encoders this runtime uses. Pass `--clean`
+to delete it afterwards.
+
+### Which detector, and why it decides whether you can sell this
+
+```bash
+.venv/Scripts/python -m tsv setup --detector yolox-tiny
+```
+
+Ultralytics YOLO11 is **AGPL-3.0**, whose obligations reach any application
+distributed with it. YOLOX is Apache-2.0, publishes ONNX graphs directly — so
+it needs no export step and no torch at all — and measured on real footage it
+holds up: over one eight-minute recording YOLO11n found five people and a
+spurious bird, YOLOX-tiny found seven people and no bird, twelve seconds
+against fourteen. On a single frame both put the same person in the same box
+to within a few pixels, at 0.918 and 0.880.
+
+```bash
+.venv/Scripts/python -m tsv hardware
+```
+
+reports what this machine can run, what is running now, and which models block
+a commercial release. Face recognition is still the unresolved one: the
+InsightFace weights are published for research, and no permissive replacement
+is in the catalogue yet.
 
 ```bash
 .venv/Scripts/python -m tsv setup --check

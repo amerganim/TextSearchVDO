@@ -79,12 +79,13 @@ class ModelChoice:
 # video, so it dominates import time.
 #
 # YOLO11 is what the project was built on and it is good, but AGPL-3.0 makes
-# it the single biggest obstacle to shipping. YOLOX is the intended
-# replacement - Apache-2.0, a nano-to-x ladder that maps onto tiers exactly,
-# and ONNX export in its own repository. Its graph output differs from
-# YOLO11's (an objectness column, so 5 + classes rather than 4 + classes),
-# which is why the entries below are marked unavailable until the decoder
-# handles both.
+# it the single biggest obstacle to shipping. YOLOX is Apache-2.0 and now
+# runs: models/detect.py carries both families, and YOLOX needs no export
+# step at all because its ONNX graphs are published directly.
+#
+# Measured on one real frame, same person, same box to within a few pixels:
+# YOLO11n scored 0.918 and YOLOX-tiny 0.880. Close enough that the licence is
+# the deciding factor rather than the accuracy.
 # ---------------------------------------------------------------------------
 
 _DETECT = (
@@ -133,14 +134,12 @@ _DETECT = (
         key="yolox-tiny",
         stage="detect",
         title="YOLOX-tiny",
-        quality="the shippable baseline: comparable to YOLO11n under a licence that allows selling the result.",
+        quality="the shippable baseline: measured at 0.880 against YOLO11n's 0.918 on the same person, under a licence that allows selling the result.",
         licence="Apache-2.0",
         shippable=True,
         approx_mb=20,
         min_ram_mb=4096,
         tier=0,
-        available=False,
-        unavailable_reason="the detector decoder does not yet read YOLOX output",
     ),
     ModelChoice(
         key="yolox-s",
@@ -152,8 +151,6 @@ _DETECT = (
         approx_mb=36,
         min_ram_mb=6144,
         tier=1,
-        available=False,
-        unavailable_reason="the detector decoder does not yet read YOLOX output",
     ),
 )
 
