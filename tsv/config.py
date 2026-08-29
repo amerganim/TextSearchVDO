@@ -133,6 +133,10 @@ class FaceConfig:
     name: str = "buffalo_s"
     detector_file: str = "det_500m.onnx"
     embedder_file: str = "w600k_mbf.onnx"
+    # "insightface" (SCRFD + ArcFace, research licence) or "opencv" (YuNet +
+    # SFace, MIT and Apache-2.0). The second is the one that can be shipped.
+    # Cosine thresholds differ between them, so this travels with `name`.
+    stack: str = "insightface"
     det_size: int = 640
     conf_threshold: float = 0.5
     # A face smaller than this carries almost no identity information; a
@@ -284,6 +288,25 @@ class Config:
     @property
     def has_face_models(self) -> bool:
         return self.face_detector_path.is_file() and self.face_embedder_path.is_file()
+
+    @property
+    def opencv_face(self) -> "Config":
+        """The same configuration with the permissive face stack selected."""
+        import dataclasses as _dc
+
+        return _dc.replace(
+            self,
+            face=_dc.replace(
+                self.face,
+                name="yunet-sface",
+                stack="opencv",
+                detector_file="face_detection_yunet_2023mar.onnx",
+                embedder_file="face_recognition_sface_2021dec.onnx",
+                # SFace's own threshold, on its own scale. See
+                # models/face_opencv.SFACE_SAME_PERSON.
+                conf_threshold=0.6,
+            ),
+        )
 
 
 DEFAULT = Config()

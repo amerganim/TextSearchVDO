@@ -73,9 +73,28 @@ to within a few pixels, at 0.918 and 0.880.
 ```
 
 reports what this machine can run, what is running now, and which models block
-a commercial release. Face recognition is still the unresolved one: the
-InsightFace weights are published for research, and no permissive replacement
-is in the catalogue yet.
+a commercial release.
+
+### The face models, and what measuring them showed
+
+InsightFace's SCRFD + ArcFace are research-only. OpenCV's **YuNet (MIT)** and
+**SFace (Apache-2.0)** replace them and install nothing new, since OpenCV is
+already a dependency:
+
+```bash
+.venv/Scripts/python tools/fetch_face_models_permissive.py --out data/models
+```
+
+Detection came out a wash — 20.4% against 18.4% over 98 person crops, median
+17–21 pixel faces either way — which is the right answer: the swap costs no
+accuracy and removes the restriction.
+
+Recognition could not be validated, and that finding is worth more than the
+models. At the face sizes in this footage, same-person and different-person
+pairs score **identically** (0.306 against 0.306); separation only appears
+above about 30 pixels. Recognition wants roughly 112 pixels of face. So naming
+people works on a camera that sees faces at head height and close range, and
+will not work on a wide overview shot — whichever models are installed.
 
 ```bash
 .venv/Scripts/python -m tsv setup --check

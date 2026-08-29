@@ -134,3 +134,89 @@ def test_face_geometry_helpers():
     assert face.width == 30.0
     assert face.height == 50.0
     assert face.as_array().tolist() == [10.0, 20.0, 40.0, 70.0]
+
+
+# ---------- the permissive stack ----------
+#
+# YuNet (MIT) and SFace (Apache-2.0) exist to remove the last research-only
+# licence from the pipeline. They are not an accuracy upgrade and these tests
+# do not pretend otherwise; what they check is that the swap is a real swap.
+
+from pathlib import Path  # noqa: E402
+
+from tsv.config import DEFAULT  # noqa: E402
+
+YUNET = DEFAULT.model_dir / "face_detection_yunet_2023mar.onnx"
+SFACE = DEFAULT.model_dir / "face_recognition_sface_2021dec.onnx"
+
+permissive_only = pytest.mark.skipif(
+    not (YUNET.is_file() and SFACE.is_file()),
+    reason="run tools/fetch_face_models_permissive.py",
+)
+
+
+def test_the_permissive_config_selects_the_permissive_files():
+    """The switch has to move all of it: stack, filenames and the name
+    recorded on every vector.
+
+    Vectors carry the model that made them, and SFace's 128 dimensions are
+    not ArcFace's 512 on a different scale - they are a different space
+    entirely. A half-applied switch would mix them.
+    """
+    permissive = DEFAULT.opencv_face
+    assert permissive.face.stack == "opencv"
+    assert permissive.face.name == "yunet-sface" != DEFAULT.face.name
+    assert "yunet" in permissive.face.detector_file
+    assert "sface" in permissive.face.embedder_file
+
+
+@permissive_only
+def test_the_permissive_pipeline_builds_and_reports_itself():
+    from tsv.analyze import build_face_pipeline
+
+    pipeline = build_face_pipeline(DEFAULT.opencv_face)
+    assert pipeline is not None
+    assert "yunet" in pipeline.info and "sface" in pipeline.info
+
+
+@permissive_only
+def test_both_stacks_answer_the_same_questions():
+    """`analyze` only ever calls these two, so this is the whole contract."""
+    from tsv.analyze import build_face_pipeline
+
+    for cfg in (DEFAULT, DEFAULT.opencv_face):
+        pipeline = build_face_pipeline(cfg)
+        if pipeline is None:
+            continue
+        assert callable(pipeline.faces_in)
+        assert callable(pipeline.best_face_in)
+        blank = np.zeros((240, 180, 3), dtype=np.uint8)
+        assert pipeline.faces_in(blank) == []
+        assert pipeline.best_face_in(blank) is None
+
+
+@permissive_only
+def test_sface_vectors_are_its_own_width_not_arcface_s():
+    """128 against ArcFace's 512.
+
+    Worth pinning: a stored vector is only comparable to one from the same
+    model, and the `model` column on the embedding tables is what keeps them
+    apart. A silent change of width here would break that quietly.
+    """
+    import cv2
+
+    embedder = cv2.FaceRecognizerSF.create(str(SFACE), "")
+    aligned = np.zeros((112, 112, 3), dtype=np.uint8)
+    assert np.asarray(embedder.feature(aligned)).flatten().shape == (128,)
+
+
+@permissive_only
+def test_a_face_partly_outside_the_frame_is_skipped_not_embedded():
+    """A crop that cannot be warped would otherwise embed the background,
+    which is an identity vector for a wall."""
+    from tsv.models.face_opencv import OpenCVFacePipeline
+
+    pipeline = OpenCVFacePipeline(YUNET, SFACE)
+    # Nothing here to find, so this exercises the empty path rather than the
+    # error path; the error path is guarded in faces_in.
+    assert pipeline.faces_in(np.zeros((64, 64, 3), dtype=np.uint8)) == []

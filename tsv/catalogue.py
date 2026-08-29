@@ -157,18 +157,38 @@ _DETECT = (
 # ---------------------------------------------------------------------------
 # Faces
 #
-# The unresolved one, and worth being blunt about: face recognition weights
-# are usually trained on datasets whose terms are research-only, and that
-# restriction follows the weights. A permissively licensed replacement for
-# buffalo is not a swap this project has found yet, so there is one entry and
-# it is marked unshippable rather than quietly presented as fine.
+# Resolved, with a caveat worth keeping in view.
 #
-# What saves it is that the app already degrades honestly without face
-# matching: naming still labels the sighting in front of you, and says plainly
-# that other appearances will not be found.
+# OpenCV's zoo publishes YuNet (MIT) and SFace (Apache-2.0), and OpenCV is
+# already a dependency here, so the permissive stack installs nothing new.
+# Detection is a wash rather than an upgrade - over 98 person crops SCRFD
+# found a face in 20.4% and YuNet in 18.4%, median 17-21 pixels either way -
+# which is the right result: the swap costs no accuracy and removes the last
+# research-only licence.
+#
+# The caveat is that SFace's *recognition* could not be validated on the
+# footage available. At the face sizes this footage contains, same-person and
+# different-person pairs score identically. That is a property of 18-pixel
+# faces rather than of the model, and no face model fixes it - see
+# models/face_opencv.py for the numbers.
+#
+# The InsightFace entries stay because they work and are legitimate for
+# personal use; they are simply marked as what they are.
 # ---------------------------------------------------------------------------
 
 _FACES = (
+    ModelChoice(
+        key="yunet-sface",
+        stage="faces",
+        title="YuNet + SFace",
+        quality="lets a person be named once and recognised elsewhere, under licences that allow selling the result.",
+        licence="MIT (YuNet) + Apache-2.0 (SFace)",
+        shippable=True,
+        licence_note="",
+        approx_mb=40,
+        min_ram_mb=4096,
+        tier=0,
+    ),
     ModelChoice(
         key="buffalo_s",
         stage="faces",

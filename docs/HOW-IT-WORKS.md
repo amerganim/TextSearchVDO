@@ -201,6 +201,43 @@ stored, so a line drawn now has a crossing count immediately. That count is
 the honest test of whether it is anywhere useful — zero means redraw it, not
 wait.
 
+### Which face models, and the licence that decides it
+
+InsightFace's SCRFD + ArcFace are published for **non-commercial research**,
+which made them the last licence blocker before this could be sold. The
+replacement is OpenCV's own pair — **YuNet (MIT)** for detection and **SFace
+(Apache-2.0)** for recognition — and since OpenCV is already a dependency,
+switching installs nothing new.
+
+```bash
+python tools/fetch_face_models_permissive.py --out data/models
+```
+
+It buys no accuracy, and that is the result to want. Over 98 person crops from
+real footage SCRFD found a face in 20.4% and YuNet in 18.4%, median 17–21
+pixels either way — indistinguishable at that sample size. The swap costs
+nothing and removes the restriction.
+
+What could **not** be validated is recognition, and the reason matters more
+than the models. Splitting SFace's ability to tell people apart by face size:
+
+| faces measured | same person | different people | separation |
+|---|---:|---:|---:|
+| all (median 18px) | 0.306 | 0.306 | **+0.000** |
+| ≥ 30px | 0.646 | 0.215 | +0.431 |
+
+At the sizes this footage contains there is no separation at all — same-person
+and different-person pairs score identically, so any threshold names strangers
+as often as the right person. The ≥ 30px row rests on a single same-person
+pair and indicates rather than proves. Either way the limit is the **camera,
+not the model**: recognition wants roughly 112 pixels of face, and 18 pixels
+upscaled has no identity left to recover. ArcFace does no better; on the same
+footage it finds slightly more faces and they are just as small.
+
+The practical consequence is that naming people works where a camera sees
+faces at something like head height and close range, and does not work on a
+wide overview shot — regardless of which models are installed.
+
 ### Naming people, and where it stops
 
 Naming a sighting adds its face vector to that person's gallery; matching then
@@ -254,6 +291,7 @@ Provenance, licence, and how each is obtained:
 | YOLO11n | Ultralytics checkpoint, exported to ONNX | **AGPL-3.0** | `tools/export_model.py` |
 | YOLOX-tiny | YOLOX release, already ONNX | Apache-2.0 | `tools/fetch_detector.py` |
 | SCRFD + ArcFace | InsightFace `buffalo_s` pack | **research only** | `tools/fetch_face_models.py` |
+| YuNet + SFace | OpenCV Zoo, via Hugging Face | MIT + Apache-2.0 | `tools/fetch_face_models_permissive.py` |
 | CLIP | `openai/clip-vit-base-patch32` via transformers | MIT | `tools/export_clip.py` |
 | Florence-2 | `onnx-community/Florence-2-base-ft`, int8 | MIT | `tools/fetch_caption_model.py` |
 

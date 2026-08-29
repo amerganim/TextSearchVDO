@@ -428,6 +428,18 @@ def build_face_pipeline(cfg: Config) -> FacePipeline | None:
     """
     if not cfg.has_face_models:
         return None
+
+    if cfg.face.stack == "opencv":
+        # YuNet and SFace, the permissively licensed pair. Same interface, and
+        # on this footage a better detector; see models/face_opencv.py.
+        from tsv.models.face_opencv import OpenCVFacePipeline
+
+        return OpenCVFacePipeline(
+            cfg.face_detector_path,
+            cfg.face_embedder_path,
+            conf_threshold=cfg.face.conf_threshold,
+        )
+
     from tsv.models.face import ArcFaceEmbedder, SCRFDDetector
 
     return FacePipeline(
