@@ -16,7 +16,6 @@ import itertools
 from dataclasses import dataclass, field
 
 import numpy as np
-from scipy.optimize import linear_sum_assignment
 
 from tsv.boxes import iou_matrix, xyxy_to_xywh
 from tsv.track.kalman import KalmanFilter
@@ -85,6 +84,12 @@ def _associate(
     """
     if len(track_boxes) == 0 or len(det_boxes) == 0:
         return [], list(range(len(track_boxes))), list(range(len(det_boxes)))
+
+    # Imported here rather than at module scope. scipy.optimize costs half a
+    # second to import and is needed only while analysing a video, but this
+    # module is on the import path of the API - so at module scope every
+    # launch of the app paid for it before showing a window.
+    from scipy.optimize import linear_sum_assignment
 
     ious = iou_matrix(track_boxes, det_boxes)
     cost = 1.0 - ious

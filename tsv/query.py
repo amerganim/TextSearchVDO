@@ -288,6 +288,9 @@ def _event_rows(conn: sqlite3.Connection, plan: QueryPlan, limit: int) -> list[A
     if plan.filters.label:
         clauses.append("AND e.label = ?")
         params.append(plan.filters.label)
+    if plan.filters.video_id:
+        clauses.append("AND e.video_id = ?")
+        params.append(plan.filters.video_id)
     if plan.filters.camera_id:
         clauses.append("AND e.camera_id = ?")
         params.append(plan.filters.camera_id)
@@ -326,6 +329,9 @@ def _sighting_rows(conn: sqlite3.Connection, plan: QueryPlan, limit: int) -> lis
     if plan.filters.label:
         clauses.append("AND t.label = ?")
         params.append(plan.filters.label)
+    if plan.filters.video_id:
+        clauses.append("AND t.video_id = ?")
+        params.append(plan.filters.video_id)
     if plan.filters.camera_id:
         clauses.append("AND t.camera_id = ?")
         params.append(plan.filters.camera_id)
@@ -470,6 +476,7 @@ def ask(
     limit: int = 20,
     min_similarity: float | None = None,
     model: str | None = None,
+    video_id: int | None = None,
 ) -> AskResult:
     """Answer a question, ranking as a fallback.
 
@@ -479,6 +486,10 @@ def ask(
     from tsv.search import search as ranked_search
 
     plan = parse(conn, question, today=today)
+    # Scope is not something the question can say, so it is applied on top of
+    # whatever the parse worked out rather than competing with it.
+    if video_id:
+        plan.filters.video_id = video_id
     result = AskResult(plan=plan)
 
     if plan.grounded or plan.unknown_names:
@@ -496,7 +507,9 @@ def ask(
             conn,
             text=plan.semantic_text or question,
             query_vector=vector,
-            filters=plan.filters if plan.grounded else SearchFilters(),
+            filters=(
+                plan.filters if plan.grounded else SearchFilters(video_id=video_id)
+            ),
             limit=limit,
             min_similarity=min_similarity,
             model=model,

@@ -16,6 +16,7 @@
     <nav class="actions">
       <button type="button" class="ghost" id="people-toggle" aria-expanded="false" hidden>People</button>
       <button type="button" class="ghost" id="places-toggle" aria-expanded="false" hidden>Places</button>
+      <button type="button" class="ghost" id="videos-toggle" aria-expanded="false" hidden>Videos</button>
       <button type="button" class="ghost" id="describe" hidden></button>
       <button type="button" id="add">Add video</button>
       <a class="ghost link" href="/advanced" title="Timeline, zones and cameras">Advanced</a>
@@ -31,6 +32,12 @@
       <button type="button" id="go">Search</button>
     </section>
     <div class="examples" id="examples" hidden></div>
+
+    <!-- What this search covers. Present whenever it is not everything. -->
+    <div class="scope" id="scope" hidden>
+      <span>Searching <b id="scope-name"></b></span>
+      <button type="button" class="linkish" id="scope-all">Search all videos instead</button>
+    </div>
 
     <!-- Work in progress. Never takes the app over. -->
     <section class="progress-strip" id="strip" hidden aria-live="polite">
@@ -145,6 +152,24 @@
       </div>
     </section>
 
+    <!-- The library: what has been indexed, and how to get rid of it. -->
+    <section class="panel" id="videos-panel" hidden>
+      <div class="panel-head">
+        <div>
+          <h2>Videos</h2>
+          <p class="panel-note">
+            Everything indexed stays here until you remove it, so you can
+            search across recordings rather than one at a time. A search
+            covers the newest one by default &mdash; the strip under the
+            search box says which, and widens to everything in one click.
+          </p>
+        </div>
+        <button type="button" class="ghost tiny" id="videos-close">Close</button>
+      </div>
+      <div class="video-list" id="video-list"></div>
+      <div class="panel-empty" id="videos-empty" hidden>Nothing indexed yet.</div>
+    </section>
+
     <!-- Results. -->
     <section class="stage" id="stage-results" hidden>
       <div class="answer" id="answer" hidden>
@@ -174,6 +199,7 @@
   <input type="file" id="filepick" accept="video/*,.mp4,.mkv,.avi,.mov,.m4v,.ts,.dav,.flv" multiple hidden>
   <script src="/static/people.js"></script>
   <script src="/static/places.js"></script>
+  <script src="/static/videos.js"></script>
   <script src="/static/simple.js"></script>
 </body>
 </html>

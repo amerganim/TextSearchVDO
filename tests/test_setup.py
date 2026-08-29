@@ -27,8 +27,15 @@ def test_every_component_explains_what_it_is_for():
         assert component.why and component.why[0].islower()
         assert component.title
         assert component.approx_mb > 0
-        assert component.packages
         assert component.command[0].startswith("tools/")
+        # Build tools are only needed by components that build something.
+        # Anything published as ONNX or ctranslate2 already - YOLOX, Whisper -
+        # is a plain download, and demanding packages here would drag the
+        # two-gigabyte torch toolchain in for no reason.
+        if component.needs_export_env:
+            assert component.packages, f"{component.key} builds but names no tools"
+        else:
+            assert not component.packages, f"{component.key} downloads but wants tools"
 
 
 def test_the_missing_summary_is_actionable(empty):
@@ -51,8 +58,8 @@ def test_each_component_names_a_tool_that_exists():
 
 
 def test_only_the_detector_is_required():
-    """Everything else degrades: no faces, no search, no captions - but the
-    timeline still works, so they must not be marked required."""
+    """Everything else degrades: no faces, no search, no descriptions, no
+    speech - but the timeline still works, so none may be marked required."""
     optional = {c.key for c in COMPONENTS if c.optional}
-    assert optional == {"faces", "search", "captions"}
+    assert optional == {"faces", "search", "captions", "audio"}
     assert [c.key for c in COMPONENTS if not c.optional] == ["detector"]

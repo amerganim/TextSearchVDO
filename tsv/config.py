@@ -153,6 +153,29 @@ class FaceConfig:
 
 
 @dataclass(frozen=True)
+class AudioConfig:
+    """Phase 5: what the recording heard.
+
+    On by default where the model is present, for the same reason captioning
+    is: a transcript nobody asked for is a search that quietly finds nothing.
+    Most cameras record no audio at all, in which case this costs one demux
+    per file and stops.
+    """
+
+    enabled: bool = True
+    model_dir: str = "whisper-base"
+    # int8 on CPU. The quality difference against float32 is small on speech
+    # this noisy, and the speed difference is not.
+    compute_type: str = "int8"
+    # None lets the model detect it per file. Setting it is markedly faster
+    # and stops a noisy recording being decided as the wrong language.
+    language: str | None = None
+    threads: int = 0
+
+    name: str = "whisper-base"
+
+
+@dataclass(frozen=True)
 class ClipConfig:
     """Phase 3: semantic search."""
 
@@ -230,6 +253,7 @@ class Config:
     face: FaceConfig = field(default_factory=FaceConfig)
     clip: ClipConfig = field(default_factory=ClipConfig)
     caption: CaptionConfig = field(default_factory=CaptionConfig)
+    audio: AudioConfig = field(default_factory=AudioConfig)
     tier_b: TierBConfig = field(default_factory=TierBConfig)
     segments: SegmentConfig = field(default_factory=SegmentConfig)
     thumb_width: int = 320
@@ -278,6 +302,15 @@ class Config:
     @property
     def caption_model_dir(self) -> Path:
         return self.model_dir / self.caption.model_dir
+
+    @property
+    def has_audio_model(self) -> bool:
+        directory = self.audio_model_dir
+        return directory.is_dir() and (directory / "model.bin").is_file()
+
+    @property
+    def audio_model_dir(self) -> Path:
+        return self.model_dir / self.audio.model_dir
 
     @property
     def has_caption_model(self) -> bool:

@@ -419,6 +419,34 @@ The limitation is honest: the direction phrases — *went out*, *came home* — 
 a **fixed list**, not an understanding of English. Real use will throw up
 phrasings that need adding.
 
+### Audio, and the two gates around it
+
+Speech is transcribed by faster-whisper on ctranslate2 — no torch, so the
+runtime stays small — and the transcript joins a segment's document in the
+word index alongside labels, names, zones and captions. There is no parallel
+path: a spoken word fuses with the other signals like anything else.
+
+It earns its place by carrying what the pixels do not. A doorbell, a knock,
+breaking glass, an alarm, a car door outside the frame — and speech, where
+*did you take your tablets* is said far more often than it is legible from a
+crop.
+
+The interesting part is what stops it inventing things. Whisper on silence
+does not return nothing; it returns fluent text. Measured against the footage
+this was built on, whose audio tracks are digitally silent at about
+−123 dBFS:
+
+| | result |
+|---|---|
+| voice-activity detection **on** | nothing, correctly |
+| voice-activity detection **off** | `"Hey!"` five times, `no_speech 0.69` |
+
+So VAD is the first gate and not an optimisation. The second is the model's
+own confidence: below an average log probability of −1.0, or above a
+no-speech estimate of 0.6, a line is discarded — and those five fail that too.
+A transcript's failure mode is not a gap, it is a plausible sentence nobody
+said, and once indexed it is indistinguishable from a true one.
+
 ### What a VLM would add, and what it would cost
 
 A vision-language model captioning person crops is the missing piece for
@@ -426,23 +454,25 @@ questions about *fine-grained actions* — the *"when did father take his
 medicine"* class. That needs a model that can look at a person and describe
 what they are doing, which none of the five above can.
 
-It is not built. Both halves are viable on this Python without adding a torch
-runtime dependency — `faster-whisper` via ctranslate2 for audio, and
-`onnxruntime-genai` for generation — but on a CPU-only machine captioning a
-day of footage is an overnight batch, not something to run while you wait.
+Both halves are viable on this Python without a torch runtime dependency.
+Captioning is built, above. Audio is built too, on `faster-whisper` via
+ctranslate2. What remains unbuilt is an LLM phrasing the answers, and on a
+CPU-only machine captioning a day of footage is still an overnight batch
+rather than something to run while you wait.
 
 ```mermaid
 flowchart LR
     subgraph BUILT["Built"]
         A["Motion"] --> B["Objects"] --> C["Identity + zones"] --> D["CLIP search"] --> E["Grounded answers"]
     end
-    F["VLM captions<br/>Florence-2, optional"]
+    F["VLM captions<br/>Florence-2"]
+    G["Speech<br/>faster-whisper"]
     E --> F
+    E --> G
     subgraph NEXT["Not built"]
-        G["Audio transcription"]
         H["LLM answer phrasing"]
     end
-    F -.-> G
+    F -.-> H
 ```
 
 ---

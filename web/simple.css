@@ -663,3 +663,79 @@ body.dragging .welcome { outline: 2px dashed var(--accent); outline-offset: 14px
   .library { order: 3; width: 100%; margin: 4px 0 0; }
   .welcome h1 { font-size: 24px; }
 }
+
+/* ---------- search scope ---------- */
+
+/* Always visible when a search covers less than everything. The library is
+   deliberately persistent - searching across days is the point of the tool -
+   so the honest fix for "why is it finding old videos" is to say which ones
+   are in scope, not to throw the library away. */
+.scope {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  max-width: var(--column);
+  margin: 10px auto 0;
+  padding: 8px 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 9px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.scope b {
+  color: var(--text);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.scope .linkish { font-size: 13px; margin-left: auto; }
+
+/* ---------- the library ---------- */
+
+.video-list { display: grid; gap: 8px; }
+
+.video-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 13px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.video-row.scoped { border-color: var(--accent); }
+.video-row.missing { opacity: .6; }
+
+.video-main { display: grid; gap: 3px; min-width: 0; }
+.video-name { font-weight: 600; font-size: 14px; overflow-wrap: anywhere; }
+.video-meta { color: var(--muted); font-size: 12px; }
+
+.video-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+  flex: none;
+}
+
+.video-actions .linkish { font-size: 12.5px; }
+.video-actions .remove { color: var(--muted); }
+.video-actions .remove:hover { color: var(--bad); }
+
+.video-badge {
+  font-size: 11px;
+  color: var(--accent);
+  background: var(--raised);
+  border-radius: 3px;
+  padding: 2px 8px;
+}
+
+@media (max-width: 640px) {
+  .video-row { flex-wrap: wrap; }
+  .video-actions { margin-left: 0; }
+}

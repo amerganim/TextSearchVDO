@@ -104,6 +104,7 @@ function refreshChrome(summary) {
   // Places can be drawn as soon as there is a camera to draw on, which is as
   // soon as anything has been indexed.
   $("places-toggle").hidden = !has;
+  $("videos-toggle").hidden = !has;
 
   const people = $("people-toggle");
   const unnamed = summary ? summary.n_people_unnamed || 0 : 0;
@@ -269,9 +270,22 @@ function watchJob(jobId, kind) {
         const nothing = !bits.length && (r.duplicates || []).length;
         if (!nothing) notice(bits.join(" &middot; ") || "Ready.", "good");
       }
+      if (r.utterances) {
+        notice(
+          `Heard ${r.utterances} line(s) of speech — now searchable by what `
+          + "was said.",
+          "good",
+        );
+      }
       if ((r.failed || []).length) notice(r.failed.join("; "));
       refreshChrome(await refreshLibrary());
       if (typeof reloadPeople === "function") reloadPeople();
+      // Somebody who has just waited for a video to be read is looking for
+      // something in that video, so that is what the next search covers.
+      if (job.kind !== "caption" && job.kind !== "listen") {
+        if (typeof reloadVideos === "function") await reloadVideos();
+        if (r.files && typeof scopeToNewest === "function") scopeToNewest();
+      }
       $("q").focus();
     } else if (job.status === "failed") {
       clearInterval(state.poll);
@@ -376,9 +390,14 @@ async function runSearch() {
   $("draw-a-place").hidden = true;
   $("results").innerHTML = "";
 
+  const scope = typeof searchScope === "function" ? searchScope() : null;
+
   let body;
   try {
-    body = await api(`/api/ask?q=${encodeURIComponent(text)}&limit=48`);
+    body = await api(
+      `/api/ask?q=${encodeURIComponent(text)}&limit=48`
+      + (scope ? `&video_id=${scope}` : "")
+    );
   } catch (err) {
     $("status").textContent = "";
     notice(`Search failed: ${err}`);
@@ -451,6 +470,11 @@ async function runSearch() {
       $("nothing-why").textContent =
         "This copy is not fully set up, so searching by description is limited. "
         + "Run python -m tsv setup, then try again.";
+    } else if (scope) {
+      // The most likely reason for an empty screen once scoping exists.
+      $("nothing-why").textContent =
+        "Nothing in this video looks like that. It only searched the one "
+        + "video named above — widen it to everything, or try simpler words.";
     } else {
       $("nothing-why").textContent =
         "Nothing in the video looks like that. Try simpler words, or describe "
@@ -535,6 +559,7 @@ async function boot() {
 
   initPeople();
   initPlaces();
+  initVideos();
 
   $("player-close").onclick = closePlayer;
   $("player-backdrop").onclick = (e) => {

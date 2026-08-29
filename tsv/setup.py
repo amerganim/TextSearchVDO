@@ -119,6 +119,17 @@ COMPONENTS: tuple[Component, ...] = (
         optional=True,
     ),
     Component(
+        key="audio",
+        title="Speech (Whisper base)",
+        why="finds what was said, and sounds a camera hears but cannot see",
+        approx_mb=145,
+        ready=lambda cfg: cfg.has_audio_model,
+        packages=(),
+        command=("tools/fetch_audio_model.py", "--out"),
+        optional=True,
+        needs_export_env=False,
+    ),
+    Component(
         key="captions",
         title="Descriptions (Florence-2)",
         why="describes what a person is doing, so actions become searchable",

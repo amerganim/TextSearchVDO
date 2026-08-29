@@ -216,6 +216,34 @@ def test_the_inbound_arrow_points_where_the_server_says_in_is(script: str):
         )
 
 
+def test_the_library_is_visible_and_its_scope_is_stated():
+    """A persistent library is the right design; a silent one is not.
+
+    Searching across days is the point of the tool, so the fix for "it always
+    has my old videos" is to show which are in scope and allow removal - not
+    to throw the archive away on launch.
+    """
+    html = (WEB / "app.html").read_text(encoding="utf-8")
+    assert 'id="videos-toggle"' in html
+    assert 'id="video-list"' in html
+    assert 'id="scope"' in html and 'id="scope-all"' in html
+    assert "initVideos()" in _js("simple.js")
+    assert "/api/videos" in _js("videos.js")
+
+
+def test_a_search_carries_the_scope_it_is_showing():
+    """Otherwise the strip says one thing and the query does another."""
+    js = _js("simple.js")
+    assert "searchScope" in js
+    assert re.search(r"video_id=\$\{scope\}", js)
+
+
+def test_a_finished_import_scopes_to_what_was_just_added():
+    """Somebody who waited for a video to be read wants that video."""
+    assert "scopeToNewest" in _js("simple.js")
+    assert "scopeToNewest" in _js("videos.js")
+
+
 # ---------- docs ----------
 
 DOCS = Path(__file__).resolve().parent.parent / "docs"

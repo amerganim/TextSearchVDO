@@ -7,11 +7,11 @@ these same endpoints rather than a second implementation.
 
 from __future__ import annotations
 
+import shutil
 import sqlite3
 from datetime import date, datetime, time as dtime, timedelta
 from pathlib import Path
 
-import cv2
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel, Field
@@ -23,8 +23,6 @@ from tsv.identity import (
     assign_identities, delete_identity, enroll_tracklet, list_identities,
     unname_tracklet,
 )
-from tsv.models.clip import build_clip
-from tsv.importer import import_videos, stage_video
 from tsv.jobs import JobRunner
 from tsv.query import ask as run_ask
 from tsv.search import SearchFilters, rebuild_text_index, search as run_search
@@ -104,6 +102,8 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
         if not text.strip() or not cfg.has_clip_models:
             return None
         if "clip" not in text_encoder:
+            from tsv.models.clip import build_clip
+
             text_encoder["clip"] = build_clip(
                 cfg.model_dir, cfg.clip.image_file, cfg.clip.text_file,
                 crop_mode=cfg.clip.crop_mode, force_backend=cfg.clip.force_backend,
@@ -179,6 +179,14 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
                 "WHERE label = 'person' AND identity_id IS NULL"
             ).fetchone()["n"],
             "faces_ready": cfg.has_face_models,
+            "audio_ready": cfg.has_audio_model,
+            "n_utterances": conn.execute(
+                "SELECT COUNT(*) AS n FROM utterances"
+            ).fetchone()["n"],
+            # Videos with sound that nothing has listened to yet.
+            "n_to_transcribe": conn.execute(
+                "SELECT COUNT(*) AS n FROM videos WHERE transcribed_at IS NULL"
+            ).fetchone()["n"],
             # Places drawn, and cameras to draw them on. A question about a
             # direction - went out, came in - can only be answered against a
             # zone, so the app needs to know whether any exist before it
@@ -222,6 +230,94 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
             "active_seconds": active,
             "reduction": (1.0 - active / duration) if duration else 0.0,
             "top_labels": [dict(r) for r in top],
+        }
+
+    @app.get("/api/videos")
+    def videos() -> list[dict]:
+        """The library, newest first.
+
+        Exposed because it was not, and that was the problem: recordings
+        accumulated with no way to see what was in there or take anything out,
+        so every search silently spanned files somebody had forgotten adding.
+        """
+        rows = conn.execute(
+            """SELECT v.id, v.path, v.duration, v.active_seconds, v.start_ts,
+                      v.width, v.height, v.transcribed_at,
+                      c.name AS camera,
+                      (SELECT COUNT(*) FROM segments s WHERE s.video_id = v.id)
+                          AS n_segments,
+                      (SELECT COUNT(*) FROM tracklets t WHERE t.video_id = v.id)
+                          AS n_tracklets,
+                      (SELECT COUNT(*) FROM utterances u WHERE u.video_id = v.id)
+                          AS n_utterances
+               FROM videos v JOIN cameras c ON c.id = v.camera_id
+               ORDER BY v.id DESC"""
+        ).fetchall()
+        out = []
+        for row in rows:
+            item = dict(row)
+            path = Path(item["path"])
+            item["name"] = path.name
+            # Whether the recording is still where it was indexed from. A
+            # library row pointing at a moved file plays nothing, and saying
+            # so beats a broken player.
+            item["present"] = path.is_file()
+            out.append(item)
+        return out
+
+    @app.delete("/api/videos/{video_id}")
+    def remove_video(video_id: int) -> dict:
+        """Take a recording out of the library.
+
+        Deletes the index rows and the images this app generated for them.
+        The recording itself is only deleted when this app made the copy - a
+        browser upload staged into data/incoming - because removing a file the
+        user pointed us at would be destroying something we were only ever
+        lent.
+        """
+        row = conn.execute(
+            "SELECT path FROM videos WHERE id = ?", (video_id,)
+        ).fetchone()
+        if row is None:
+            raise HTTPException(404, "no such video")
+
+        source = Path(row["path"])
+        images = [
+            Path(r["thumb_path"])
+            for table in ("segments", "tracklets")
+            for r in conn.execute(
+                f"SELECT thumb_path FROM {table} "
+                f"WHERE video_id = ? AND thumb_path IS NOT NULL",
+                (video_id,),
+            )
+        ]
+
+        conn.execute("DELETE FROM videos WHERE id = ?", (video_id,))
+        conn.commit()
+
+        removed_images = 0
+        for image in images:
+            try:
+                image.unlink(missing_ok=True)
+                removed_images += 1
+            except OSError:
+                pass
+        thumbs = cfg.thumb_dir / str(video_id)
+        if thumbs.is_dir():
+            shutil.rmtree(thumbs, ignore_errors=True)
+
+        # Only a copy we made ourselves.
+        staged = source.is_file() and source.parent == (cfg.data_dir / "incoming")
+        if staged:
+            source.unlink(missing_ok=True)
+
+        from tsv.search import rebuild_text_index
+
+        rebuild_text_index(conn)
+        return {
+            "deleted": video_id,
+            "images_removed": removed_images,
+            "file_removed": staged,
         }
 
     @app.get("/api/cameras")
@@ -440,6 +536,12 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
             raise HTTPException(400, f"no such file or folder: {path}")
 
         def work(report):
+            # Imported inside the job, not at module scope. The analysis stack
+            # reaches scipy, the tracker and the model wrappers; none of that
+            # is needed to open a window or run a search, and at module scope
+            # every launch waited for all of it.
+            from tsv.importer import import_videos
+
             result = import_videos(conn, path, cfg, report=report).as_dict()
             # A copy this app made of a recording it already has is pure waste
             # - these files are whole videos - so it goes as soon as the import
@@ -475,7 +577,61 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
         with temp.open("wb") as out:
             while chunk := await file.read(1 << 20):
                 out.write(chunk)
+        from tsv.importer import stage_video
+
         return _start_import(stage_video(temp, incoming, name=safe), staged=True)
+
+    @app.post("/api/listen")
+    def start_listening(force: bool = False) -> dict:
+        """Read speech out of whatever has not been listened to yet."""
+        if not cfg.has_audio_model:
+            raise HTTPException(
+                400,
+                "No transcription model. Fetch it with: "
+                "python tools/fetch_audio_model.py --out data/models",
+            )
+
+        from tsv.audio import transcribe_videos
+        from tsv.search import rebuild_text_index
+
+        def work(report):
+            report.stage("Listening for speech", 0.9, "")
+
+            def on_progress(done: int, total: int, fraction: float) -> None:
+                if total:
+                    report.step((done + fraction) / total, f"{done + 1} of {total}")
+
+            summary = transcribe_videos(conn, cfg, force=force, on_progress=on_progress)
+            # A transcript nobody can search for is not worth having.
+            report.stage("Making it searchable", 0.1, "")
+            rebuild_text_index(conn)
+            report.step(1.0, "ready")
+            return summary.as_dict()
+
+        return jobs.submit("listen", "speech", work).as_dict()
+
+    @app.get("/api/utterances")
+    def utterances(
+        video_id: int | None = None,
+        segment_id: int | None = None,
+        limit: int = Query(200, le=2000),
+    ) -> list[dict]:
+        """What was said, in time order."""
+        clauses, params = [], []
+        if video_id:
+            clauses.append("AND video_id = ?")
+            params.append(video_id)
+        if segment_id:
+            clauses.append("AND segment_id = ?")
+            params.append(segment_id)
+        rows = conn.execute(
+            f"""SELECT id, video_id, segment_id, t_start, t_end, ts_start, text,
+                       confidence
+                FROM utterances WHERE 1=1 {" ".join(clauses)}
+                ORDER BY ts_start LIMIT ?""",
+            [*params, limit],
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     @app.post("/api/caption")
     def start_captioning(force: bool = False, limit: int | None = None) -> dict:
@@ -528,6 +684,7 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
         q: str,
         limit: int = Query(20, le=200),
         min_similarity: float | None = None,
+        video_id: int | None = None,
     ) -> dict:
         """Answer a typed question, falling back to ranked search."""
         floor = (
@@ -535,7 +692,7 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
         )
         result = run_ask(
             conn, q, embed_text=_query_vector, limit=limit, min_similarity=floor,
-            model=cfg.clip.name,
+            model=cfg.clip.name, video_id=video_id,
         )
         plan = result.plan
 
@@ -760,6 +917,10 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
         path = Path(row["path"])
         if not path.is_file():
             raise HTTPException(410, "source file has moved or been deleted")
+
+        # Both imported here: this is the only endpoint that decodes a frame,
+        # and neither belongs on the path that opens the window.
+        import cv2
 
         from tsv.frames import sample_windows
 

@@ -178,3 +178,50 @@ def test_missing_source_file_fails_cleanly(indexed, tmp_path):
     conn.execute("UPDATE videos SET path = ?", (str(tmp_path / "gone.mp4"),))
     conn.commit()
     assert _analyze(conn, cfg).status == "failed"
+
+
+# ---------- vectors are written, and labelled ----------
+
+class StubClip:
+    """A CLIP stand-in: fixed-width vectors, no model files needed."""
+
+    info = "stub:clip"
+
+    def embed_image(self, image: np.ndarray) -> np.ndarray:
+        vector = np.zeros(8, dtype=np.float32)
+        vector[0] = 1.0
+        return vector
+
+    def embed_text(self, text: str) -> np.ndarray:
+        return self.embed_image(None)
+
+
+def test_analysis_writes_embeddings_and_records_which_model_made_them(indexed):
+    """A regression test for a bug that produced no tracklets at all.
+
+    `_write_tracklets` is module level and has no `cfg`. Reaching for
+    `cfg.clip.name` inside it raised NameError, which `analyze_video`'s caller
+    caught and filed as "this video failed" - so with a CLIP model loaded,
+    every analysed file silently yielded nothing. Every existing test passed,
+    because they all ran with `clip=None` and never reached the line.
+
+    So this asserts both halves: that vectors are written when an embedder is
+    present, and that each one carries the name of what produced it.
+    """
+    conn, cfg, _ = indexed
+    result = _analyze(conn, cfg, clip=StubClip())
+
+    assert result.status != "failed", result.note
+    assert result.n_tracklets > 0, "analysis produced no tracklets"
+
+    vectors = conn.execute(
+        "SELECT model, COUNT(*) AS n FROM tracklet_embeddings "
+        "WHERE kind = 'clip' GROUP BY model"
+    ).fetchall()
+    assert vectors, "an embedder was supplied but nothing was stored"
+    assert [row["model"] for row in vectors] == [cfg.clip.name]
+
+    scene = conn.execute(
+        "SELECT model FROM segment_embeddings WHERE kind = 'clip'"
+    ).fetchall()
+    assert scene and all(row["model"] == cfg.clip.name for row in scene)

@@ -33,7 +33,7 @@ words. Audio transcription is not built yet.
 
 ## Getting started
 
-Double-click **setup.bat** once, then **TextSearchVDO.bat**. Or from a prompt:
+Double-click **setup.bat** once, then **TextSearchVDO.vbs**. Or from a prompt:
 
 ```bash
 py -3.14 -m venv .venv && .venv/Scripts/python -m pip install -r requirements.txt
@@ -75,6 +75,28 @@ to within a few pixels, at 0.918 and 0.880.
 reports what this machine can run, what is running now, and which models block
 a commercial release.
 
+### Hearing as well as seeing
+
+```bash
+.venv/Scripts/python -m tsv listen
+```
+
+Speech is transcribed with faster-whisper &mdash; ctranslate2, no torch &mdash;
+and lands in the same word index as object labels, names and descriptions, so
+a spoken word ranks by the same fusion as everything else. It runs as part of
+every import once the model is installed.
+
+Audio earns its place by being a *different* signal: a doorbell, a knock,
+breaking glass or an alarm has no visual signature at all, and a camera
+pointed at the hallway still hears the front door.
+
+Two gates keep invented text out of the index, and both are load-bearing. The
+footage this was built against has audio tracks that are **digitally silent**
+&mdash; peak 0.0000, about &minus;123&nbsp;dBFS. With voice-activity detection
+on, Whisper correctly returns nothing. With it off, it returns five identical
+lines of `"Hey!"` conjured out of the silence, which without the second filter
+would be indexed as something somebody said.
+
 ### The face models, and what measuring them showed
 
 InsightFace's SCRFD + ArcFace are research-only. OpenCV's **YuNet (MIT)** and
@@ -110,10 +132,24 @@ Double-click **TextSearchVDO.bat**, or:
 .venv/Scripts/python -m tsv app
 ```
 
+Use **TextSearchVDO.vbs** to launch it, not the `.bat`. Both start the same
+app, but a `.bat` is run by `cmd.exe`, and `cmd.exe` shows a console window
+before anything else happens &mdash; no amount of `pythonw` suppresses that
+from inside a batch file. The `.vbs` has no console to begin with. The `.bat`
+is kept for when something is wrong and you want to see the error.
+
 A native window opens. Drop a video on it, wait while it reads it, then type
 what you are looking for. Results come back as frames with times; clicking one
 plays from just before that moment. If nothing matches, it says so rather than
 handing back the closest three frames in the library.
+
+**Videos** is the library. Everything indexed stays until you remove it, so
+you can search across recordings rather than one at a time &mdash; but a
+search covers the *newest* one by default, and a strip under the search box
+says which. One click widens it to everything. That is deliberate: a
+persistent archive is the point of a tool like this, and the fix for "why is
+it finding my old videos" is to say what is in scope, not to throw the
+library away every launch.
 
 **Places** is where you draw a line across a doorway, or a shape around an
 area. It matters more than it sounds: a direction is only measurable against

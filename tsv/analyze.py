@@ -161,6 +161,12 @@ def _write_tracklets(
     clip: ClipEmbedder | None = None,
     clip_crops: dict[int, np.ndarray] | None = None,
     scene_frame: np.ndarray | None = None,
+    # Which weights produced the vectors written here. Passed in rather than
+    # read from a config this function does not have - the reason being that
+    # reaching for `cfg` here raised NameError, the caller logged it as a bad
+    # file, and every analysed video silently produced nothing.
+    face_model: str | None = None,
+    clip_model: str | None = None,
 ) -> tuple[int, int, int, int, Counter]:
     labels: Counter = Counter()
     n_detections = 0
@@ -234,7 +240,7 @@ def _write_tracklets(
                 # any single frame, which may be a blink or a turn.
                 store_tracklet_embedding(
                     conn, tracklet_id, "face", aggregate(vectors),
-                    n_samples=len(vectors), model=cfg.face.name,
+                    n_samples=len(vectors), model=face_model,
                 )
                 n_faces += 1
 
@@ -242,7 +248,7 @@ def _write_tracklets(
             crop = clip_crops.get(track.track_id)
             if crop is not None and crop.size:
                 store_tracklet_embedding(
-                    conn, tracklet_id, "clip", clip.embed_image(crop), model=cfg.clip.name
+                    conn, tracklet_id, "clip", clip.embed_image(crop), model=clip_model
                 )
                 n_embedded += 1
 
@@ -257,7 +263,7 @@ def _write_tracklets(
                    dim = excluded.dim, vector = excluded.vector,
                    model = excluded.model""",
             (segment["id"], "clip", len(vector), vector.astype(np.float32).tobytes(),
-             cfg.clip.name),
+             clip_model),
         )
         n_embedded += 1
 
@@ -334,6 +340,7 @@ def analyze_video(
                 conn, segments[window_index], video, tracker.close(),
                 sample_times, frame_w, frame_h, crops, cfg.crop_dir,
                 face_crops=face_crops, face=face, min_face_px=cfg.face.min_face_px,
+                face_model=cfg.face.name, clip_model=cfg.clip.name,
                 clip=clip, clip_crops=clip_crops, scene_frame=scene_frame,
             )
             n_tracklets += added

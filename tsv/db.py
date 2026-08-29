@@ -11,7 +11,7 @@ import sqlite3
 import threading
 from pathlib import Path
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_info (
@@ -84,6 +84,25 @@ CREATE TABLE IF NOT EXISTS tracklets (
     x1          REAL, y1 REAL, x2 REAL, y2 REAL,
     thumb_path  TEXT
 );
+
+-- What was said, and when. Separate from segments because speech does not
+-- respect them: somebody can talk during a stretch the motion pass discarded,
+-- and that is still worth finding. segment_id is therefore nullable.
+CREATE TABLE IF NOT EXISTS utterances (
+    id          INTEGER PRIMARY KEY,
+    video_id    INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+    segment_id  INTEGER REFERENCES segments(id) ON DELETE SET NULL,
+    t_start     REAL NOT NULL,
+    t_end       REAL NOT NULL,
+    ts_start    REAL NOT NULL,
+    ts_end      REAL NOT NULL,
+    text        TEXT NOT NULL,
+    -- The model's own average log probability. Kept so a later pass can
+    -- raise the bar without re-transcribing everything.
+    confidence  REAL
+);
+CREATE INDEX IF NOT EXISTS idx_utterance_video ON utterances(video_id, t_start);
+CREATE INDEX IF NOT EXISTS idx_utterance_segment ON utterances(segment_id);
 
 -- Individual sightings. Kept because Phase 2 identity and Phase 3 captioning
 -- both need to crop the actual pixels at a specific instant.
@@ -286,6 +305,11 @@ def init(conn: sqlite3.Connection) -> None:
     # is called. Uploading the same video a second time used to make a second
     # library entry, and the totals on screen then counted it twice.
     ensure_column(conn, "videos", "fingerprint", "TEXT")
+
+    # When speech was last read out of this file. Separate from "has
+    # utterances", because a silent recording is transcribed, finds nothing,
+    # and must not be retried on every run.
+    ensure_column(conn, "videos", "transcribed_at", "REAL")
 
     # Which weights produced each vector. A stored embedding is only
     # comparable to one from the same model, and nothing about the numbers

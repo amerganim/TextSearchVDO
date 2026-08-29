@@ -36,7 +36,14 @@ STAGE_SHARES = {"ingest": 0.15, "analyze": 0.75, "index": 0.10}
 # against roughly fifteen frames a second for detection. The bar has to say so
 # or it will appear to stall at the end of a run.
 STAGE_SHARES_WITH_CAPTIONS = {
-    "ingest": 0.05, "analyze": 0.25, "caption": 0.66, "index": 0.04,
+    "ingest": 0.05, "analyze": 0.25, "caption": 0.62, "listen": 0.04, "index": 0.04,
+}
+
+# Transcription is cheap next to captioning - measured at over a hundred times
+# realtime on a CPU, because voice activity detection skips the silence - so
+# it barely moves the bar.
+STAGE_SHARES_WITH_AUDIO = {
+    "ingest": 0.14, "analyze": 0.70, "listen": 0.06, "index": 0.10,
 }
 
 
@@ -49,6 +56,7 @@ class ImportResult:
     active: float = 0.0
     faces: int = 0
     captions: int = 0
+    utterances: int = 0
     skipped: int = 0
     # Files that turned out to be a copy of something already indexed. Counted
     # apart from `skipped`, which means "unchanged since last time": one is
@@ -71,6 +79,7 @@ class ImportResult:
             "reduction": round(self.reduction, 4),
             "faces": self.faces,
             "captions": self.captions,
+            "utterances": self.utterances,
             "skipped": self.skipped,
             "duplicates": self.duplicates or [],
             "failed": self.failed or [],
@@ -102,12 +111,20 @@ def import_videos(
     report: Reporter | None = None,
     force: bool = False,
     with_captions: bool | None = None,
+    with_audio: bool | None = None,
 ) -> ImportResult:
     """Ingest, analyse and index a file or folder, reporting progress."""
     result = ImportResult(failed=[], duplicates=[])
     captions_on = cfg.caption.enabled if with_captions is None else with_captions
     captions_on = captions_on and cfg.has_caption_model
-    shares = STAGE_SHARES_WITH_CAPTIONS if captions_on else STAGE_SHARES
+    listen_on = (cfg.audio.enabled if with_audio is None else with_audio)
+    listen_on = listen_on and cfg.has_audio_model
+    if captions_on:
+        shares = STAGE_SHARES_WITH_CAPTIONS
+    elif listen_on:
+        shares = STAGE_SHARES_WITH_AUDIO
+    else:
+        shares = STAGE_SHARES
     videos = iter_videos(path)
     if not videos:
         raise ValueError(f"no video files found in {path}")
@@ -210,6 +227,28 @@ def import_videos(
             result.captions = captions.captioned
         except FileNotFoundError as exc:
             result.failed.append(f"captioning skipped: {exc}")
+
+    # ---- what was said ----
+    #
+    # After captioning rather than before: it is far cheaper, so putting it
+    # last means the expensive stage is not held up by it, and the transcript
+    # lands in the same index rebuild below.
+    if listen_on:
+        from tsv.audio import transcribe_videos
+
+        if report:
+            report.stage("Listening for speech", shares["listen"], "")
+
+        def on_listen(done: int, total: int, fraction: float) -> None:
+            if report and total:
+                report.step((done + fraction) / total, f"{done + 1} of {total}")
+
+        try:
+            heard = transcribe_videos(conn, cfg, force=force, on_progress=on_listen)
+            result.utterances = heard.utterances
+            result.failed.extend(heard.failed)
+        except Exception as exc:  # noqa: BLE001 - a missing model is not a failed import
+            result.failed.append(f"transcription skipped: {type(exc).__name__}: {exc}")
 
     if report:
         report.stage("Building the index", shares["index"], "")

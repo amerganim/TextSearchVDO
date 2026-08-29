@@ -63,6 +63,13 @@ class SearchHit:
 @dataclass
 class SearchFilters:
     day: str | None = None
+    # One recording rather than the whole library. The app defaults searches
+    # to the video most recently added, because "I just added this, find
+    # something in it" is what somebody is nearly always doing - and a result
+    # from a file they imported last week, presented without saying so, reads
+    # as the app being wrong rather than as the library being larger than they
+    # remembered.
+    video_id: int | None = None
     camera_id: int | None = None
     identity: str | None = None
     zone: str | None = None
@@ -73,8 +80,8 @@ class SearchFilters:
     def active(self) -> bool:
         return any(
             v is not None
-            for v in (self.day, self.camera_id, self.identity, self.zone,
-                      self.label, self.event_kind)
+            for v in (self.day, self.video_id, self.camera_id, self.identity,
+                      self.zone, self.label, self.event_kind)
         )
 
 
@@ -120,6 +127,13 @@ def segment_document(conn: sqlite3.Connection, segment_id: int) -> str:
     ):
         parts.append(row["caption"])
 
+    # What was said during it. The only stage that can produce a name nobody
+    # enrolled, or a word for something off-camera - a doorbell, a knock.
+    for row in conn.execute(
+        "SELECT text FROM utterances WHERE segment_id = ?", (segment_id,)
+    ):
+        parts.append(row["text"])
+
     for row in conn.execute(
         """SELECT DISTINCT z.name, e.kind FROM events e
            JOIN zones z ON z.id = e.zone_id WHERE e.segment_id = ?""",
@@ -162,6 +176,9 @@ def _filter_clause(filters: SearchFilters) -> tuple[str, list]:
         start, end = _day_bounds(filters.day)
         clauses.append("s.ts_end > ? AND s.ts_start < ?")
         params += [start, end]
+    if filters.video_id:
+        clauses.append("s.video_id = ?")
+        params.append(filters.video_id)
     if filters.camera_id:
         clauses.append("s.camera_id = ?")
         params.append(filters.camera_id)

@@ -441,6 +441,51 @@ def test_a_line_drawn_in_the_app_answers_a_direction_question(zone_client):
     assert body["understood"]["zone"] == "front door"
 
 
+def test_the_library_can_be_listed_and_a_video_removed(zone_client):
+    """The gap behind "why does it always have my old videos".
+
+    A persistent library is correct for this - searching across days is the
+    point - but there was no way to see what was in it or take anything out,
+    so it read as the app ignoring what you asked for.
+    """
+    videos = zone_client.get("/api/videos").json()
+    assert videos and videos[0]["name"].endswith(".mp4")
+    assert videos[0]["n_segments"] > 0
+    assert videos[0]["present"] is True
+
+    video_id = videos[0]["id"]
+    body = zone_client.delete(f"/api/videos/{video_id}").json()
+    assert body["deleted"] == video_id
+    assert zone_client.get("/api/videos").json() == []
+    # Segments and tracklets go with it rather than being orphaned.
+    assert zone_client.get("/api/summary").json()["n_segments"] == 0
+    assert zone_client.delete(f"/api/videos/{video_id}").status_code == 404
+
+
+def test_a_search_can_be_scoped_to_one_video(zone_client):
+    """What the strip under the search box does.
+
+    Without it every search silently spanned the whole library, and a hit from
+    a file somebody forgot importing looks like the app being wrong.
+    """
+    video_id = zone_client.get("/api/videos").json()[0]["id"]
+
+    everything = zone_client.get("/api/ask?q=person").json()
+    scoped = zone_client.get(f"/api/ask?q=person&video_id={video_id}").json()
+    assert scoped["understood"]["intent"] == everything["understood"]["intent"]
+
+    missing = zone_client.get("/api/ask?q=person&video_id=999999").json()
+    assert missing["results"] == []
+    assert not (missing["answer"] and missing["answer"]["found"])
+
+
+def test_summary_reports_what_has_been_listened_to(zone_client):
+    body = zone_client.get("/api/summary").json()
+    assert "audio_ready" in body
+    assert body["n_utterances"] == 0
+    assert body["n_to_transcribe"] >= 0
+
+
 def test_deleting_an_identity_unnames_its_sightings(zone_client):
     tracklet_id = _first_tracklet(zone_client)
     identity_id = zone_client.post(
