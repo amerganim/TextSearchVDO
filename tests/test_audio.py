@@ -190,3 +190,77 @@ def test_a_file_with_no_audio_stream_is_recognised(tmp_path):
     fake = tmp_path / "not-a-video.mp4"
     fake.write_bytes(b"nonsense")
     assert has_audio(fake) is False
+
+
+# ---------- where it runs ----------
+
+def test_a_machine_with_no_gpu_falls_back_to_int8_on_the_cpu():
+    """The common case, and it must never raise.
+
+    `pick_device` is called before any model exists, on machines this has
+    never seen. A capability probe that throws is worse than one that shrugs.
+    """
+    from tsv.audio import pick_device
+
+    device, compute = pick_device("cpu")
+    assert (device, compute) == ("cpu", "int8")
+
+    device, compute = pick_device("auto")
+    assert device in {"cpu", "cuda"}
+    assert compute in {"int8", "float16"}
+
+
+def test_a_gpu_is_taken_when_one_is_visible(monkeypatch):
+    """Hard-coding the CPU meant a workstation transcribed at laptop speed.
+
+    Measured on the baseline machine, cores are nearly worthless here - 2
+    threads gave 19.4x realtime and 12 gave 20.6x - so a discrete GPU is the
+    only hardware that changes the answer.
+    """
+    import ctranslate2
+
+    from tsv.audio import pick_device
+
+    monkeypatch.setattr(ctranslate2, "get_cuda_device_count", lambda: 1)
+    assert pick_device("auto") == ("cuda", "float16")
+
+    # Still overridable, because a counted device is not a working one.
+    assert pick_device("cpu") == ("cpu", "int8")
+
+
+def test_counting_a_gpu_that_will_not_load_falls_back(monkeypatch, tmp_path):
+    """Listed is not usable - the rule the backend layer already lives by.
+
+    A CUDA device with a broken driver is counted and then fails at model
+    load. A slower transcript beats no transcript.
+    """
+    import ctranslate2
+
+    import tsv.audio as audio
+
+    monkeypatch.setattr(ctranslate2, "get_cuda_device_count", lambda: 1)
+
+    directory = tmp_path / "whisper-base"
+    directory.mkdir()
+    (directory / "model.bin").write_bytes(b"stub")
+
+    attempts = []
+
+    class StubWhisper:
+        def __init__(self, path, device, compute_type, cpu_threads=0):
+            attempts.append(device)
+            if device == "cuda":
+                raise RuntimeError("no usable CUDA driver")
+
+    import sys
+    import types
+
+    module = types.ModuleType("faster_whisper")
+    module.WhisperModel = StubWhisper
+    monkeypatch.setitem(sys.modules, "faster_whisper", module)
+
+    cfg = dataclasses.replace(
+        DEFAULT, data_dir=tmp_path, model_dir_override=tmp_path
+    )
+    assert audio.load_model(cfg) is not None
+    assert attempts == ["cuda", "cpu"]

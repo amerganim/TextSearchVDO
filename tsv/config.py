@@ -164,9 +164,14 @@ class AudioConfig:
 
     enabled: bool = True
     model_dir: str = "whisper-base"
-    # int8 on CPU. The quality difference against float32 is small on speech
-    # this noisy, and the speed difference is not.
-    compute_type: str = "int8"
+    # "auto" takes a discrete GPU where there is one and falls back to the
+    # CPU, which is the difference between a workstation transcribing at CPU
+    # speed and using what it has. "cpu" pins it.
+    device: str = "auto"
+    # None follows the device: float16 on a GPU, int8 on a CPU. Set it to
+    # override both. On speech this noisy the quality difference against
+    # float32 is small and the speed difference is not.
+    compute_type: str | None = None
     # None lets the model detect it per file. Setting it is markedly faster
     # and stops a noisy recording being decided as the wrong language.
     language: str | None = None

@@ -441,6 +441,28 @@ this was built on, whose audio tracks are digitally silent at about
 | voice-activity detection **on** | nothing, correctly |
 | voice-activity detection **off** | `"Hey!"` five times, `no_speech 0.69` |
 
+### What transcription costs, and what hardware changes it
+
+Measured on the baseline machine (i5-1235U, int8, CPU) with the gate off, so
+the whole file is genuinely decoded:
+
+| model | size | speed | an hour of speech |
+|---|---:|---:|---:|
+| tiny | 78 MB | 25.0× realtime | 2.4 min |
+| base | 148 MB | 17.8× realtime | 3.4 min |
+| small | 486 MB | 8.0× realtime | 7.5 min |
+
+With the gate on and real footage, base ran at **112× realtime**, because most
+of a recording is silence and silence is nearly free.
+
+The surprise is that **cores barely matter**: two threads gave 19.4× and all
+twelve gave 20.6×, six percent for six times the cores. Whisper's decoder is
+autoregressive, so this is not the parallel workload detection is. A bigger
+CPU is the wrong thing to spend on; a discrete GPU is not, and
+`audio.pick_device` takes one when it is there — `float16` on CUDA, `int8` on
+CPU, falling back if a counted device will not actually load. That last part
+is the same rule the backend layer lives by: listed is not usable.
+
 So VAD is the first gate and not an optimisation. The second is the model's
 own confidence: below an average log probability of −1.0, or above a
 no-speech estimate of 0.6, a line is discarded — and those five fail that too.

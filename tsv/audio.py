@@ -12,6 +12,21 @@ from a crop.
 this is acceptable here: the runtime stays ONNX Runtime, numpy and now one
 more native library, rather than growing a two-gigabyte tensor framework.
 
+**What it costs.** Measured on the baseline machine (i5-1235U, whisper-base,
+int8, CPU) over 500 seconds of audio, with voice-activity detection off so
+the whole file is genuinely decoded:
+
+    tiny    25.0x realtime     2.4 minutes per hour of speech
+    base    17.8x realtime     3.4 minutes per hour
+    small    8.0x realtime     7.5 minutes per hour
+
+With the gate on and real footage, which is mostly silence, base ran at 112x.
+
+Threads barely matter: 2 gave 19.4x and all 12 gave 20.6x - six times the
+cores for six percent. The decoder is autoregressive and this is not a
+core-bound workload, so a larger CPU is the wrong thing to spend on. The
+headroom is a discrete GPU, which `pick_device` takes when there is one.
+
 **Gated the same way video is.** Stage 0 refuses to decode video where the
 packet sizes say nothing moved; this refuses to transcribe where there is no
 voice. That is not an optimisation, it is what keeps invented text out of the
@@ -109,6 +124,32 @@ def has_audio(path: Path) -> bool:
         return False
 
 
+def pick_device(preference: str = "auto") -> tuple[str, str]:
+    """(device, compute type) for this machine.
+
+    ctranslate2 ships with CUDA compiled in, so the question is whether there
+    is a card to use rather than whether the library can. On one there is real
+    headroom - float16 on a discrete GPU is several times what an int8 CPU
+    path manages - and hard-coding CPU meant a machine with a 4090 in it
+    transcribed no faster than a laptop.
+
+    Same rule as everywhere else here: what is reported has to be what was
+    tried. `get_cuda_device_count` counts visible devices, and a count without
+    a working driver is still a failure at model load, so the caller falls
+    back rather than trusting this.
+    """
+    if preference == "cpu":
+        return "cpu", "int8"
+    try:
+        import ctranslate2
+
+        if ctranslate2.get_cuda_device_count() > 0:
+            return "cuda", "float16"
+    except Exception:      # noqa: BLE001 - no CUDA is an answer, not an error
+        pass
+    return "cpu", "int8"
+
+
 def load_model(cfg):
     """The transcription model, or None when it is not installed.
 
@@ -124,12 +165,24 @@ def load_model(cfg):
     except ImportError:
         return None
 
-    return WhisperModel(
-        str(directory),
-        device="cpu",
-        compute_type=cfg.audio.compute_type,
-        cpu_threads=cfg.audio.threads or 0,
-    )
+    device, compute = pick_device(cfg.audio.device)
+    if cfg.audio.compute_type:
+        compute = cfg.audio.compute_type
+
+    try:
+        return WhisperModel(
+            str(directory), device=device, compute_type=compute,
+            cpu_threads=cfg.audio.threads or 0,
+        )
+    except Exception:      # noqa: BLE001 - a listed GPU that will not load
+        if device == "cpu":
+            raise
+        # The card was counted but the model would not compile on it. CPU
+        # always works, and a slower transcript beats none.
+        return WhisperModel(
+            str(directory), device="cpu", compute_type="int8",
+            cpu_threads=cfg.audio.threads or 0,
+        )
 
 
 def transcribe_file(

@@ -33,13 +33,14 @@ if TYPE_CHECKING:
     from tsv.hardware import Machine
 
 # Stages a model can be chosen for. These are the keys used everywhere else.
-STAGES: tuple[str, ...] = ("detect", "faces", "search", "captions")
+STAGES: tuple[str, ...] = ("detect", "faces", "search", "captions", "audio")
 
 STAGE_TITLES = {
     "detect": "Object detection",
     "faces": "Face recognition",
     "search": "Semantic search",
     "captions": "Descriptions",
+    "audio": "Speech",
 }
 
 
@@ -290,11 +291,68 @@ _CAPTIONS = (
     ),
 )
 
+# ---------------------------------------------------------------------------
+# Speech
+#
+# Measured on the baseline machine (i5-1235U, int8, CPU) against 500 seconds
+# of audio with voice-activity detection *off*, so the whole file is really
+# decoded - the honest wall-to-wall-speech cost rather than the speed of
+# skipping silence:
+#
+#     tiny    25.0x realtime    2.4 minutes per hour of speech
+#     base    17.8x realtime    3.4 minutes per hour
+#     small    8.0x realtime    7.5 minutes per hour
+#
+# With VAD on and real footage, which is mostly silence, base ran at 112x.
+#
+# Cores buy almost nothing: 2 threads gave 19.4x and all 12 gave 20.6x, a 6%
+# gain for six times the cores. Whisper's decoder is autoregressive and this
+# workload is not core-bound, so a bigger CPU is the wrong thing to spend on.
+# A discrete GPU is where the headroom is - see audio.pick_device.
+# ---------------------------------------------------------------------------
+
+_AUDIO = (
+    ModelChoice(
+        key="whisper-tiny",
+        stage="audio",
+        title="Whisper tiny",
+        quality="the fastest, and the one that drops or invents words on distant or noisy speech.",
+        licence="MIT",
+        shippable=True,
+        approx_mb=78,
+        min_ram_mb=4096,
+        tier=0,
+    ),
+    ModelChoice(
+        key="whisper-base",
+        stage="audio",
+        title="Whisper base",
+        quality="the default: the smallest worth trusting on a room recording, at 3.4 minutes per hour of speech.",
+        licence="MIT",
+        shippable=True,
+        approx_mb=148,
+        min_ram_mb=4096,
+        tier=1,
+    ),
+    ModelChoice(
+        key="whisper-small",
+        stage="audio",
+        title="Whisper small",
+        quality="noticeably better on accents and distance; a little over twice the cost of base.",
+        licence="MIT",
+        shippable=True,
+        approx_mb=486,
+        min_ram_mb=8192,
+        tier=2,
+    ),
+)
+
 CATALOGUE: dict[str, tuple[ModelChoice, ...]] = {
     "detect": _DETECT,
     "faces": _FACES,
     "search": _SEARCH,
     "captions": _CAPTIONS,
+    "audio": _AUDIO,
 }
 
 
@@ -353,6 +411,7 @@ def in_use(cfg) -> dict[str, str]:
         "faces": cfg.face.name,
         "search": cfg.clip.name,
         "captions": "florence2-base-ft",
+        "audio": cfg.audio.model_dir,
     }
 
 

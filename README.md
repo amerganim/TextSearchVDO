@@ -90,6 +90,37 @@ Audio earns its place by being a *different* signal: a doorbell, a knock,
 breaking glass or an alarm has no visual signature at all, and a camera
 pointed at the hallway still hears the front door.
 
+### Checking that it works
+
+```bash
+.venv/Scripts/python -m tsv listen --file "some video with talking.mp4"
+```
+
+One file, nothing indexed, nothing changed — the fastest way to see whether
+transcription works on your machine and your audio. It prints the model, the
+device it chose, how long it took, and every line it kept. If your recording
+is silent it says so rather than inventing something.
+
+### What it costs
+
+Measured on a laptop (i5-1235U, int8, CPU), with the silence gate off so the
+whole file is genuinely decoded — the honest wall-to-wall-speech figure:
+
+| model | size | speed | an hour of speech |
+|---|---:|---:|---:|
+| tiny | 78 MB | 25.0× realtime | 2.4 min |
+| **base** | 148 MB | 17.8× realtime | 3.4 min |
+| small | 486 MB | 8.0× realtime | 7.5 min |
+
+Real footage is mostly silence, and the gate skips it: base ran at **112×
+realtime** over an actual recording.
+
+**More CPU cores buy almost nothing here.** Two threads gave 19.4× and all
+twelve gave 20.6× — six percent for six times the cores. Whisper's decoder is
+autoregressive and this is not a core-bound workload. The hardware that does
+change the answer is a discrete GPU, which the app now takes automatically
+(`float16` on CUDA, `int8` on CPU) instead of the CPU it used to hard-code.
+
 Two gates keep invented text out of the index, and both are load-bearing. The
 footage this was built against has audio tracks that are **digitally silent**
 &mdash; peak 0.0000, about &minus;123&nbsp;dBFS. With voice-activity detection
