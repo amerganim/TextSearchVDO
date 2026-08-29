@@ -415,6 +415,74 @@ def cmd_caption(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_hardware(args: argparse.Namespace) -> int:
+    """What this machine can run, and what it is allowed to ship."""
+    from tsv.catalogue import (
+        STAGE_TITLES, STAGES, choices, fits, in_use, recommend, unshippable,
+    )
+    from tsv.hardware import probe
+
+    cfg = _config(args)
+    detector = cfg.detect_model_path if cfg.detect_model_path.is_file() else None
+    if detector is None:
+        print("no detector installed, so GPUs are listed rather than tested.")
+        print("run 'python -m tsv setup' first for a real answer.")
+        print()
+
+    machine = probe(verify_with=detector)
+    print(machine.summary())
+    for accelerator in machine.accelerators:
+        if accelerator.usable is False:
+            print(f"  unusable: {accelerator} - {accelerator.note}")
+    print()
+
+    picked = recommend(machine)
+    running = in_use(cfg)
+    print("  + fits this machine, * running now")
+    print()
+    for stage in STAGES:
+        print(STAGE_TITLES[stage])
+        for choice in choices(stage):
+            ok, why = fits(choice, machine)
+            current = running.get(stage) == choice.key
+            mark = "*" if current else ("+" if ok else " ")
+            note = ""
+            if current:
+                note = " <- in use"
+            elif picked.get(stage) is choice:
+                note = " <- could upgrade to this"
+            licence = "" if choice.shippable else f"  [{choice.licence}]"
+            print(f"  {mark} {choice.title:<34} {choice.approx_mb:>5} MB{licence}{note}")
+            if not ok and why:
+                print(f"      {why}")
+        print()
+
+    blocked = unshippable()
+    if blocked:
+        print("Not shippable in a product as it stands:")
+        for choice in blocked:
+            print(f"  {choice.title} - {choice.licence}")
+            if choice.licence_note:
+                for line in _wrap(choice.licence_note, 72):
+                    print(f"      {line}")
+    else:
+        print("Every model in use can be distributed commercially.")
+    return 0
+
+
+def _wrap(text: str, width: int) -> list[str]:
+    words, lines, current = text.split(), [], ""
+    for word in words:
+        if len(current) + len(word) + 1 > width:
+            lines.append(current)
+            current = word
+        else:
+            current = f"{current} {word}".strip()
+    if current:
+        lines.append(current)
+    return lines
+
+
 def cmd_setup(args: argparse.Namespace) -> int:
     """Fetch or build every model the app can use."""
     from tsv.setup import COMPONENTS, run_setup, status
@@ -639,6 +707,10 @@ def main(argv: list[str] | None = None) -> int:
     p_setup.add_argument("--clean", action="store_true",
                          help="delete the export environment afterwards")
     p_setup.set_defaults(func=cmd_setup)
+
+    p_hardware = sub.add_parser(
+        "hardware", help="what this machine can run, and what it can ship")
+    p_hardware.set_defaults(func=cmd_hardware)
 
     p_stats = sub.add_parser("stats", help="what is in the index")
     p_stats.set_defaults(func=cmd_stats)
