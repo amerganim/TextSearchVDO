@@ -235,14 +235,20 @@ Pairing lasts 30 days and survives restarts.
 **Windows Firewall will block this until told not to**, and it does so
 silently: the server binds, the address prints, the QR scans, and the
 phone then sits there forever. Both `tsv share` and the Phone panel check
-for it and print the fix, which needs an Administrator PowerShell once:
+for it and say so.
+
+The fix is one double-click on **allow-phone.bat**. It asks Windows for
+administrator rights itself — say yes to the prompt — and adds a single
+rule scoped to `LocalSubnet`, so the port is open to your own network
+and nothing else. To undo it later:
 
 ```powershell
-New-NetFirewallRule -DisplayName "TextSearchVDO" -Direction Inbound -Protocol TCP -LocalPort 8000 -Action Allow -Profile Private,Public -RemoteAddress LocalSubnet
+Remove-NetFirewallRule -DisplayName "TextSearchVDO"
 ```
 
-`-RemoteAddress LocalSubnet` keeps it to your own network rather than
-opening the port outright.
+The rule covers every profile, because a phone hotspot, a USB tether and
+a home router are three different ones to Windows and it marks new ones
+Public.
 
 Sharing also warns when Windows has the network marked **Public** — which
 is what it calls one you have not said you trust. A private *address* and

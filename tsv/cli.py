@@ -778,14 +778,20 @@ def cmd_share(args: argparse.Namespace) -> int:
 
     # The failure that looks exactly like success: everything above is true,
     # and Windows drops every packet from the phone without telling anybody.
-    from tsv.share import firewall_allows, firewall_command
+    from tsv.share import firewall_allows, firewall_command, firewall_fixer
 
     if firewall_allows(port) is False:
         print("  Windows Firewall is not letting anything reach this port, so")
-        print("  the phone will scan the code and then sit there. To fix it,")
-        print("  run this once in an Administrator PowerShell:")
+        print("  the phone will scan the code and then sit there.")
         print()
-        print("    " + firewall_command(port))
+        fixer = firewall_fixer()
+        if fixer is not None:
+            print(f"  Fix it by double-clicking:  {fixer.name}")
+            print("  (it asks Windows for permission, so say yes to the prompt)")
+        else:
+            print("  Run this once in an Administrator PowerShell:")
+            print()
+            print("    " + firewall_command(port))
         print()
     _print_qr(url)
     print("  Ctrl+C to stop sharing.")

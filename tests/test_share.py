@@ -317,3 +317,31 @@ def test_asking_about_the_firewall_never_raises_or_hangs():
     answer = firewall_allows(8000)
     assert answer in {True, False, None}
     assert time.time() - started < 20, "slow enough to be reported as unknown"
+
+
+def test_there_is_a_double_click_fix_for_the_firewall():
+    """Telling somebody to open an Administrator PowerShell and paste a
+    command is where most people stop, and reasonably so."""
+    from tsv.share import firewall_fixer
+
+    script = firewall_fixer()
+    assert script is not None and script.is_file()
+
+    body = script.read_text(encoding="utf-8")
+    assert "RunAs" in body, "it cannot raise the permission prompt"
+    assert "net session" in body, "it would loop, re-elevating forever"
+    assert "-RemoteAddress LocalSubnet" in body, "opened wider than needed"
+    assert "Remove-NetFirewallRule" in body, "no way back out is documented"
+
+
+def test_the_firewall_rule_covers_every_profile():
+    """A phone hotspot, a USB tether and a home router are three different
+    profiles to Windows, and it marks new ones Public.
+
+    Naming only Private and Public misses DomainAuthenticated, which is what
+    a work laptop gets - and that machine is exactly where somebody would be
+    told the feature is broken.
+    """
+    from tsv.share import firewall_command
+
+    assert "-Profile Any" in firewall_command(8000)

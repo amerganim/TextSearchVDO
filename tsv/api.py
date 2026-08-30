@@ -229,10 +229,19 @@ def create_app(cfg: Config = DEFAULT, share: bool = False) -> FastAPI:
         # the machine that would be blocking it.
         blocked = firewall_allows(port) is False if port else False
         if blocked:
+            from tsv.share import firewall_fixer
+
+            fixer = firewall_fixer()
             warnings.append(
                 "Windows Firewall is not letting anything reach this port, so "
-                "a phone will scan the code and then sit there. Run this once "
-                "in an Administrator PowerShell: " + firewall_command(port)
+                "a phone will scan the code and then sit there. "
+                + (
+                    f"Fix it by double-clicking {fixer.name} in the app's "
+                    "folder and saying yes to the prompt."
+                    if fixer is not None
+                    else "Run this once in an Administrator PowerShell: "
+                    + firewall_command(port)
+                )
             )
         return {
             "on": bool(lan.get("server")),

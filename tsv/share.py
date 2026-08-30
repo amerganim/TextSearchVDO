@@ -208,8 +208,20 @@ def firewall_command(port: int) -> str:
     return (
         'New-NetFirewallRule -DisplayName "TextSearchVDO" -Direction Inbound '
         f"-Protocol TCP -LocalPort {port} -Action Allow "
-        "-Profile Private,Public -RemoteAddress LocalSubnet"
+        "-Profile Any -RemoteAddress LocalSubnet"
     )
+
+
+def firewall_fixer() -> Path | None:
+    """The double-clickable version of `firewall_command`, if it is there.
+
+    Telling somebody to open an Administrator PowerShell and paste a command
+    is where most people stop, and they are right to - it is a lot of
+    ceremony to look at a video. The script asks Windows for the rights
+    itself, so the whole job is a double-click and one prompt.
+    """
+    script = Path(__file__).resolve().parent.parent / "allow-phone.bat"
+    return script if script.is_file() else None
 
 
 def describe_addresses(
