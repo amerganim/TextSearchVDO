@@ -18,6 +18,8 @@ import time
 from pathlib import Path
 from urllib.request import urlopen
 
+from tsv import single
+
 VIDEO_TYPES = ("Video files (*.mp4;*.mkv;*.avi;*.mov;*.m4v;*.ts;*.dav;*.flv)", "All files (*.*)")
 
 # Shown the instant the window exists, then replaced by the app.
@@ -146,7 +148,17 @@ def run(cfg, title: str = "TextSearchVDO", width: int = 1180, height: int = 800)
     from tsv.api import create_app
 
     _own_the_taskbar_button()
+
+    # One window per index. A second copy is not visibly wrong - it is just a
+    # window showing the same thing - so it goes unnoticed until something
+    # behaves impossibly, which is how the duplicated pairing code presented.
+    already = single.running(cfg)
+    if already is not None:
+        single.focus(already.pid)
+        return 0
+
     port = _free_port()
+    single.claim(cfg, port)
     # Sharing capability on, listening on loopback only. The middleware
     # exempts this machine, so the window is unaffected; turning sharing on
     # from the Share panel adds a second listener rather than changing
@@ -186,6 +198,12 @@ def run(cfg, title: str = "TextSearchVDO", width: int = 1180, height: int = 800)
     # and only falls back to sys.executable when it is unset - which is what
     # produced the Python logo. Passed as a str because that fallback is
     # guarded by os.path.isfile, and a missing file lands back on pythonw.exe.
-    webview.start(open_when_ready, icon=str(ICON) if ICON.is_file() else None)
+    try:
+        webview.start(open_when_ready, icon=str(ICON) if ICON.is_file() else None)
+    finally:
+        # In a finally because a crash that kept the lock would shut the user
+        # out of their own app until they found a file they have never heard
+        # of. The port probe on the next start covers what this misses.
+        single.release(cfg)
     server.should_exit = True
     return 0
