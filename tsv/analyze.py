@@ -298,6 +298,36 @@ def analyze_video(
 
     if not segments:
         return AnalyzeResult(video_id, path, "skipped")
+
+    # Which way up this recording is, worked out once and remembered.
+    #
+    # Phones write sideways frames with no rotation for ffmpeg to apply, and a
+    # detector trained on upright scenes finds almost nothing in one. Measured
+    # here: the same clip went from 9 detections at 0.60 to 14 at 0.81 - and
+    # only then contained the bed that made "anyone sleeping?" answerable.
+    #
+    # Done here rather than at ingest because this is where a detector exists,
+    # and because the motion pass does not care: it looks for change, and
+    # change is the same whichever way up it is.
+    from tsv.orientation import detect as detect_orientation
+
+    # Worked out on every analysis pass rather than cached behind a flag. It
+    # costs a second or two against minutes of analysis, and a stored value
+    # with no way to tell "not looked at yet" from "looked at, and upright"
+    # is the kind of state that goes stale silently.
+    #
+    # Guarded, because this is now the first thing to touch the file: a
+    # recording that has moved used to be reported as a failed video and
+    # started raising out of here instead.
+    try:
+        found = detect_orientation(path, detector, float(video["duration"] or 0.0))
+    except Exception as exc:  # noqa: BLE001 - reported, not raised
+        return AnalyzeResult(
+            video_id, path, "failed", note=f"{type(exc).__name__}: {exc}"
+        )
+    rotation = found.degrees
+    conn.execute("UPDATE videos SET rotation = ? WHERE id = ?", (rotation, video_id))
+    conn.commit()
     if not path.is_file():
         return AnalyzeResult(video_id, path, "failed", note="source file missing")
 
@@ -356,6 +386,7 @@ def analyze_video(
         for sample in sample_windows(
             path, windows, cfg.detect.detect_fps,
             width=cfg.detect.decode_width, pixel_format="rgb24",
+            rotation=rotation,
         ):
             if sample.window_index != current_window:
                 flush(current_window)

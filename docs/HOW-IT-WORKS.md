@@ -141,6 +141,43 @@ flowchart TD
     FTS --> READY(["Searchable"])
 ```
 
+### Which way up the recording is
+
+Two clips from a phone produced almost nothing — one person in 34 seconds, and
+in the other nothing at all. Not the motion gate and not the models: **the
+frames come out of the file lying on their side**, with no `rotate` tag and no
+display matrix for ffmpeg to apply, so the app was faithfully analysing a
+sideways room.
+
+Detectors do not cope with that. Everything they were trained on stands up.
+The same detector, twelve frames, at each right angle:
+
+| | detections | best |
+|---|---:|---:|
+| as stored | 9 | 0.60 |
+| **rotated 90° cw** | **14** | **0.81** — and finds a bed |
+| rotated 90° ccw | 2 | 0.60 |
+| rotated 180° | 10 | 0.85 |
+
+The bed is the point: the question that failed was *"anyone sleeping?"*, and
+the bed only exists once the picture is the right way up.
+
+So orientation is **measured, not read**. Try the four right angles on about
+six frames and keep the one the detector is most confident about — rotating a
+picture does not create objects in it, so the angle that yields the most
+confident detections is upright. An alternative must beat what is already
+there by a clear margin, because turning a recording that was already correct
+is worse than leaving a sideways one alone.
+
+The rotation is applied where frames are *read*, not by each caller.
+Detection, crops, faces, captions and thumbnails all have to agree which way
+up the picture is; one of them disagreeing means boxes drawn against a
+differently-oriented frame.
+
+After the fix, the same two clips: 1 tracklet became 4 (person, chair,
+laptop) with the caption *"A woman is laying on a bed"*; and 0 tracklets
+became 7 (bottle, laptop, bicycle, motorcycle).
+
 ### When the gate has nothing to work with
 
 Every threshold above assumes what a fixed camera gives it: activity is rare

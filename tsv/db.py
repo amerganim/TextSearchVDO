@@ -11,7 +11,7 @@ import sqlite3
 import threading
 from pathlib import Path
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_info (
@@ -338,6 +338,11 @@ def init(conn: sqlite3.Connection) -> None:
     # utterances", because a silent recording is transcribed, finds nothing,
     # and must not be retried on every run.
     ensure_column(conn, "videos", "transcribed_at", "REAL")
+
+    # How far off upright the frames are stored, in degrees clockwise. Phones
+    # write sideways video with no rotation to read, and a detector trained on
+    # upright scenes finds almost nothing in it - see tsv/orientation.py.
+    ensure_column(conn, "videos", "rotation", "INTEGER DEFAULT 0")
 
     # Which weights produced each vector. A stored embedding is only
     # comparable to one from the same model, and nothing about the numbers

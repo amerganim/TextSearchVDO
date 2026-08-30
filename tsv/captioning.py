@@ -89,7 +89,7 @@ def pending_tracklets(conn: sqlite3.Connection, cfg: Config, force: bool = False
     where = "" if force else " AND t.caption IS NULL"
     return conn.execute(
         f"""SELECT t.id, t.video_id, t.t_start, t.t_end, t.label,
-                   t.x1, t.y1, t.x2, t.y2, v.path
+                   t.x1, t.y1, t.x2, t.y2, v.path, v.rotation
             FROM tracklets t JOIN videos v ON v.id = t.video_id
             WHERE t.label IN ({placeholders}){where}
             ORDER BY t.ts_start DESC""",
@@ -149,8 +149,12 @@ def caption_tracklets(
         wanted = {i: tracklets[i] for i in range(len(tracklets))}
         seen: set[int] = set()
 
+        # The same rotation analysis used, or the crop described is not the
+        # crop the box was drawn on - the caption would describe a different
+        # part of the picture entirely.
+        rotation = int(tracklets[0]["rotation"] or 0)
         for sample in sample_windows(path, windows, fps=1.0, width=None,
-                                     pixel_format="rgb24"):
+                                     pixel_format="rgb24", rotation=rotation):
             index = sample.window_index
             if index in seen or index not in wanted:
                 continue

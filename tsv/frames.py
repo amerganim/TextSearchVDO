@@ -42,12 +42,19 @@ def sample_windows(
     fps: float,
     width: int | None = None,
     pixel_format: str = "rgb24",
+    rotation: int = 0,
 ) -> Iterator[Sample]:
     """Yield frames at ~`fps` from each window, in order.
 
     Frames decoded between the seek point and the window start are skipped
     rather than yielded: seeking lands on the preceding keyframe, which can be
     seconds earlier.
+
+    `rotation` turns each frame upright, in degrees clockwise off upright as
+    stored. Applied here rather than by each caller because everything that
+    looks at pixels - detection, crops, faces, captions, thumbnails - has to
+    agree about which way up the picture is, and one of them disagreeing
+    means boxes drawn against a differently-oriented frame.
     """
     if not windows:
         return
@@ -87,5 +94,9 @@ def sample_windows(
                 array = frame.reformat(
                     width=out_w, height=out_h, format=pixel_format
                 ).to_ndarray()
+                if rotation:
+                    from tsv.orientation import apply as turn_upright
+
+                    array = turn_upright(array, rotation)
                 yield Sample(t=t, frame=array, window_index=window_index, window_start=first)
                 first = False

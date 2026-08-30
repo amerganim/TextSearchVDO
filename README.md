@@ -223,6 +223,20 @@ was and — as important — where nothing was recorded at all, filters for
 browsing by camera, day and object class, and a readout of what the question
 parser actually grounded. It has a way back to the app.
 
+### Sideways video
+
+Phones write recordings whose frames are stored on their side, with no
+rotation for a player to read. A detector trained on upright scenes finds
+almost nothing in one — measured here, a clip went from 9 detections at
+0.60 to 14 at 0.81 once turned, and only then contained the bed that made
+*"anyone sleeping?"* answerable.
+
+So the app works it out: the four right angles are tried on about six
+frames and the one the detector is most confident about wins. An
+alternative has to beat the stored orientation by a clear margin, because
+turning a recording that was already upright is worse than leaving a
+sideways one alone. Nothing to configure.
+
 ## Using it from a phone
 
 ```bash
