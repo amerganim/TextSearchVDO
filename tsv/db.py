@@ -11,7 +11,7 @@ import sqlite3
 import threading
 from pathlib import Path
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_info (
@@ -84,6 +84,22 @@ CREATE TABLE IF NOT EXISTS tracklets (
     x1          REAL, y1 REAL, x2 REAL, y2 REAL,
     thumb_path  TEXT
 );
+
+-- Transfers in progress. How much has arrived is deliberately NOT stored
+-- here: it is os.stat on the partial file, because a counter can disagree
+-- with the disk after a crash and the disagreement produces a file with a
+-- hole in it that only fails later, in the demuxer, looking like a corrupt
+-- video rather than a bad upload.
+CREATE TABLE IF NOT EXISTS uploads (
+    id          INTEGER PRIMARY KEY,
+    name        TEXT NOT NULL,
+    size        INTEGER NOT NULL,
+    path        TEXT NOT NULL,
+    started_at  REAL NOT NULL,
+    touched_at  REAL NOT NULL,
+    finished_at REAL
+);
+CREATE INDEX IF NOT EXISTS idx_upload_resume ON uploads(name, size, finished_at);
 
 -- Phones that have been let in. A cookie names a row here, so revoking is a
 -- DELETE and takes effect on the very next request rather than whenever a

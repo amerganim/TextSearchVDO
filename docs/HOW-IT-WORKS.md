@@ -545,6 +545,39 @@ find a private address, and names what each address probably is — Android
 tethering hands the PC `192.168.42.x`, iOS `172.20.10.x` — because *which of
 these is the cable* is exactly the question somebody has at that moment.
 
+### Getting the video there in the first place
+
+```mermaid
+flowchart LR
+    B["POST /api/upload/begin<br/>name + size"] --> F{"Seen this<br/>file before?"}
+    F -->|"yes"| R["offset = bytes on disk"]
+    F -->|"no"| Z["offset = 0"]
+    R --> P
+    Z --> P["PUT /api/upload/id<br/>X-Upload-Offset"]
+    P --> C{"Offset matches<br/>the file's end?"}
+    C -->|"no"| T["Answer with the real offset"]
+    T --> P
+    C -->|"yes"| W["Append, return new offset"]
+    W --> P
+    W --> D{"All of it?"}
+    D -->|"yes"| N["POST finish<br/>size checked, then imported"]
+```
+
+**How much arrived is `os.stat` on the partial file, never a stored counter.**
+A counter can disagree with the disk after a crash, and the disagreement is
+silent: the client resumes at an offset the server believes, writes from
+there, and produces a file with a hole in it. That surfaces much later, in the
+demuxer, looking like a corrupt recording rather than a bad transfer.
+
+**Resuming is keyed by what the file is, not by who is asking.** A phone that
+reloaded has lost every variable it had; what it still has is the file the
+user picked again. Name and size together find the partial data.
+
+**A chunk at the wrong offset is answered, not rejected.** The usual cause is
+a chunk that was written while its reply was lost, so the client is re-sending
+something already stored. Telling it where the file actually ends lets it skip
+ahead rather than start over.
+
 ### Why there is no Android app
 
 The page is responsive, streams video by range request, and uploads through a

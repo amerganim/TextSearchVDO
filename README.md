@@ -231,6 +231,27 @@ store review.
 `python -m tsv devices` lists what has been paired; `--revoke <id>` removes
 one, and it is refused on its very next request.
 
+### Sending a video from the phone
+
+Uploads are chunked and resumable, which matters more than it sounds. A phone
+recording is gigabytes; at the ~12 MB/s a laptop manages over WiFi, four of
+them is five minutes of holding one connection open, and everything a phone
+does normally &mdash; locking the screen, switching apps, walking towards the
+door &mdash; ends it. Under the old single-POST upload the reward was starting
+again from zero.
+
+Now only one chunk has to survive at a time, retried with backoff, and the
+**server** says where to carry on. Picking the same video again after a
+failure resumes from the byte it reached, including after a reload &mdash; the
+partial data is found by name and size, which is all a phone still knows once
+its page has gone. **Stop** in the progress strip pauses rather than cancels.
+
+Two guards worth knowing about: an upload is refused up front if there is not
+enough disk space, and refused at the end if fewer bytes arrived than were
+promised. The second matters because a short file otherwise reaches the
+demuxer and is reported as a corrupt recording, which sends somebody to look
+at their camera instead of their WiFi.
+
 ### What sharing does and does not protect
 
 Sharing is **off by default** and is a constructor argument rather than a

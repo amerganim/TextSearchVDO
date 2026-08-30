@@ -26,6 +26,7 @@ from tsv.identity import (
     assign_identities, delete_identity, enroll_tracklet, list_identities,
     unname_tracklet,
 )
+from tsv import uploads
 from tsv.jobs import JobRunner
 from tsv.share import (
     COOKIE_DAYS, COOKIE_NAME, Pairing, is_public_path, issue_cookie, list_devices,
@@ -661,10 +662,17 @@ def create_app(cfg: Config = DEFAULT, share: bool = False) -> FastAPI:
             from tsv.importer import import_videos
 
             result = import_videos(conn, path, cfg, report=report).as_dict()
-            # A copy this app made of a recording it already has is pure waste
-            # - these files are whole videos - so it goes as soon as the import
-            # reports it added nothing.
-            if staged and result["duplicates"] and not result["files"]:
+            # A copy this app made that turned into nothing is pure waste, and
+            # these are whole videos. Two ways that happens: the recording was
+            # already indexed, or it could not be read at all - an upload that
+            # arrived corrupt, or a file that was never video. Either way the
+            # original is still on the phone, so the copy goes.
+            #
+            # Only ever a copy *this* made. A file the user pointed at stays
+            # where it is whatever the importer thought of it.
+            if staged and not result["files"] and (
+                result["duplicates"] or result["failed"]
+            ):
                 path.unlink(missing_ok=True)
             return result
 
@@ -678,10 +686,11 @@ def create_app(cfg: Config = DEFAULT, share: bool = False) -> FastAPI:
 
     @app.post("/api/import/upload")
     async def import_upload(file: UploadFile = File(...)) -> dict:
-        """Index a video arriving over HTTP.
+        """Index a video arriving as one request.
 
-        Only used by a plain browser, where there is no path to point at. The
-        desktop window sends a path instead and nothing is copied.
+        Kept for scripts and for a file small enough that resuming would never
+        matter. Anything from a phone goes through /api/upload instead, which
+        survives the connection dropping.
         """
         if not file.filename:
             raise HTTPException(400, "no filename")
@@ -698,6 +707,85 @@ def create_app(cfg: Config = DEFAULT, share: bool = False) -> FastAPI:
         from tsv.importer import stage_video
 
         return _start_import(stage_video(temp, incoming, name=safe), staged=True)
+
+    # ---------- resumable upload ----------
+    #
+    # Three calls: begin, then a PUT per chunk, then finish. The offset always
+    # comes back from the server, so a client that lost track - a reload, a
+    # retry whose reply never arrived - is told where to carry on rather than
+    # having to guess or start again.
+
+    @app.post("/api/upload/begin")
+    async def upload_begin(request: Request) -> dict:
+        body = await request.json()
+        name = str(body.get("name", "")).strip()
+        try:
+            size = int(body.get("size", 0))
+        except (TypeError, ValueError):
+            size = 0
+        if not name or size <= 0:
+            raise HTTPException(400, "name and size are required")
+
+        ok, why = uploads.space_for(cfg.data_dir, size)
+        if not ok:
+            raise HTTPException(507, why)
+
+        # Housekeeping here rather than on a timer: this is the only moment
+        # the application knows somebody is thinking about uploads at all.
+        uploads.sweep(conn)
+        return uploads.begin(conn, cfg.data_dir, name, size).as_dict()
+
+    @app.get("/api/upload/{upload_id}")
+    def upload_status(upload_id: int) -> dict:
+        upload = uploads.get(conn, upload_id)
+        if upload is None:
+            raise HTTPException(404, "no such upload")
+        return upload.as_dict()
+
+    @app.put("/api/upload/{upload_id}")
+    async def upload_chunk(upload_id: int, request: Request) -> dict:
+        """One chunk, at a stated offset.
+
+        A wrong offset is not an error. The usual cause is a chunk that was
+        written while its reply was lost, so the client is sending something
+        already on disk; answering with the real offset lets it skip ahead
+        instead of starting over.
+        """
+        upload = uploads.get(conn, upload_id)
+        if upload is None:
+            raise HTTPException(404, "no such upload")
+
+        try:
+            offset = int(request.headers.get("x-upload-offset", "-1"))
+        except ValueError:
+            offset = -1
+        if offset < 0:
+            raise HTTPException(400, "X-Upload-Offset header is required")
+
+        data = await request.body()
+        if upload.received + len(data) > upload.size:
+            raise HTTPException(400, "that chunk runs past the declared size")
+
+        return uploads.write_chunk(conn, upload, offset, data).as_dict()
+
+    @app.post("/api/upload/{upload_id}/finish")
+    def upload_finish(upload_id: int) -> dict:
+        upload = uploads.get(conn, upload_id)
+        if upload is None:
+            raise HTTPException(404, "no such upload")
+        try:
+            staged = uploads.finish(conn, cfg.data_dir, upload)
+        except ValueError as exc:
+            # Short by some bytes: the transfer is not done, so say how far it
+            # actually got rather than starting an import of a broken file.
+            raise HTTPException(409, str(exc)) from None
+        return _start_import(staged, staged=True)
+
+    @app.delete("/api/upload/{upload_id}")
+    def upload_abandon(upload_id: int) -> dict:
+        if not uploads.abandon(conn, upload_id):
+            raise HTTPException(404, "no such upload")
+        return {"abandoned": upload_id}
 
     @app.post("/api/listen")
     def start_listening(force: bool = False) -> dict:

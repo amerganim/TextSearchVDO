@@ -289,3 +289,43 @@ def test_the_page_states_the_model_set_it_actually_ships():
         DEFAULT.clip.text_file,
     ):
         assert filename in page, f"{filename} is loaded by the app but not documented"
+
+
+def test_uploads_are_chunked_and_resumable():
+    """A single POST asked a phone to hold one connection for gigabytes.
+
+    Everything a phone does normally - locking, switching apps, walking out of
+    range - ended it, and the reward was starting again from zero.
+    """
+    js = _js("upload.js")
+    assert "/api/upload/begin" in js
+    assert "X-Upload-Offset" in js, "the server cannot place a chunk"
+    assert "file.slice(" in js, "the whole file is still being sent at once"
+    assert "UPLOAD_RETRIES" in js, "a dropped connection is not retried"
+    assert "initVideos" not in js, "the uploader should not know about panels"
+
+    app = _js("simple.js")
+    assert "uploadFiles(" in app, "the app is not using the resumable path"
+    assert 'src="/static/upload.js"' in (WEB / "app.html").read_text(encoding="utf-8")
+
+
+def test_the_client_takes_the_offset_from_the_server():
+    """It must never assume where it got to.
+
+    A reply lost after the write landed means the phone believes less arrived
+    than really did; trusting its own count would rewrite bytes, and trusting
+    it in the other direction would leave a hole.
+    """
+    js = _js("upload.js")
+    assert re.search(r"state\s*=\s*sent", js), "the client keeps its own offset"
+    assert "sent.offset <= state.offset" in js, "no guard against a stalled upload"
+
+
+def test_a_transfer_can_be_stopped_from_the_progress_strip():
+    html = (WEB / "app.html").read_text(encoding="utf-8")
+    assert 'id="strip-stop"' in html
+    js = _js("simple.js")
+    assert "state.uploading.abort()" in js
+    # Stopping keeps what arrived, and the wording has to say so or somebody
+    # assumes the work is gone and starts again.
+    assert "carry on from where it stopped" in js

@@ -23,6 +23,8 @@ const state = {
   // videos for what somebody was doing would silently find nothing.
   toCaption: 0, captionReady: false, captionStarted: false, captioning: false,
   zones: 0,
+  // The controller for a transfer in flight, so it can be called off.
+  uploading: null,
 };
 
 /** Captions come from a model, so they are text of unknown shape. */
@@ -164,23 +166,45 @@ async function importPaths(paths) {
 
 async function importFiles(files) {
   if (!files || !files.length) return false;
-  showStrip("Copying " + files[0].name, 0.02, "");
+
+  // Chunked and resumable. A phone recording is gigabytes, and everything a
+  // phone does normally - locking, switching apps, walking out of range -
+  // used to mean starting the whole transfer again.
+  state.uploading = new AbortController();
+  showStrip(`Sending ${files[0].name}`, 0.01, "");
 
   let last = null;
-  for (const file of files) {
-    const form = new FormData();
-    form.append("file", file);
-    try {
-      const body = await api("/api/import/upload", { method: "POST", body: form });
-      if (body.detail) {
-        notice(body.detail);
-        continue;
-      }
-      last = body.id;
-    } catch (err) {
-      notice(`Could not read ${file.name}: ${err}`);
+  try {
+    const jobs = await uploadFiles(files, {
+      signal: state.uploading.signal,
+      onProgress: ({ file, index, count, fraction }) => {
+        const which = count > 1 ? ` (${index + 1} of ${count})` : "";
+        showStrip(`Sending ${file.name}${which}`, fraction, "you can leave this open");
+      },
+      onFileDone: (job) => {
+        if (job && job.id) last = job.id;
+      },
+    });
+    if (jobs.length > 1) {
+      notice(`${jobs.length} videos received. Reading them now.`, "good");
     }
+  } catch (err) {
+    state.uploading = null;
+    if (err && err.name === "AbortError") {
+      hideStrip();
+      return true;
+    }
+    hideStrip();
+    // Whatever arrived is kept, so saying this is not a consolation - picking
+    // the same file again really does carry on from where it stopped.
+    notice(
+      `${err.message || err} Picking the same file again continues from `
+      + "where it stopped.",
+    );
+    return true;
   }
+
+  state.uploading = null;
   if (last) watchJob(last);
   else hideStrip();
   return true;
@@ -199,6 +223,9 @@ async function chooseFiles() {
 
 function showStrip(title, progress, detail) {
   state.importing = true;
+  // Stopping only means anything while bytes are still being sent. Once the
+  // computer is reading a video, there is nothing to call off.
+  $("strip-stop").hidden = !state.uploading;
   $("strip").hidden = false;
   $("strip-title").textContent = title;
   $("strip-detail").textContent = detail || "";
@@ -209,6 +236,7 @@ function showStrip(title, progress, detail) {
 function hideStrip() {
   state.importing = false;
   $("strip").hidden = true;
+  $("strip-stop").hidden = true;
 }
 
 /** What a running job should be called while it works. */
@@ -552,6 +580,18 @@ async function boot() {
   };
   $("choose").onclick = chooseFiles;
   $("draw-a-place").onclick = () => window.openPlaces && window.openPlaces();
+  $("strip-stop").onclick = () => {
+    if (!state.uploading) return;
+    state.uploading.abort();
+    // What arrived is kept on purpose, so this is a pause rather than a
+    // cancel - and saying so is the difference between somebody picking the
+    // file again and somebody assuming the work is gone.
+    notice(
+      "Stopped sending. What arrived is kept &mdash; pick the same video "
+      + "again to carry on from where it stopped.",
+      "warn",
+    );
+  };
   $("filepick").onchange = (e) => {
     importFiles(e.target.files);
     e.target.value = "";           // let the same file be picked again
