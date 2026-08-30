@@ -649,8 +649,12 @@ def cmd_setup(args: argparse.Namespace) -> int:
     # successful run can still leave the app half installed, and saying
     # "ready" then would be false.
     remaining = [c for c, is_ready in status(cfg, detector=args.detector) if not is_ready]
-    ready_now = len(COMPONENTS) - len(remaining)
-    print(f"\n{ready_now} of {len(COMPONENTS)} ready in {report.elapsed:.0f}s")
+    # components_for rather than the module-level list: with a detector
+    # chosen the catalogue is not the default one, and the count printed
+    # here has to match the run that just happened.
+    catalogue = components_for(args.detector)
+    ready_now = len(catalogue) - len(remaining)
+    print(f"\n{ready_now} of {len(catalogue)} ready in {report.elapsed:.0f}s")
 
     if report.failed:
         print("some parts did not install; the app runs with less of it until they are.")
