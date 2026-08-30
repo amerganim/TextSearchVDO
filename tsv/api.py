@@ -11,6 +11,7 @@ import asyncio
 import io
 import shutil
 import sqlite3
+import threading
 from datetime import date, datetime, time as dtime, timedelta
 from pathlib import Path
 
@@ -97,12 +98,19 @@ def _spread(
             buckets[i] = max(buckets[i], value)
 
 
-def create_app(cfg: Config = DEFAULT, share: bool = False) -> FastAPI:
+def create_app(
+    cfg: Config = DEFAULT, share: bool = False, warm: bool = False
+) -> FastAPI:
     """The app. `share` decides whether anything but this machine may reach it.
 
     Off by default, and deliberately a constructor argument rather than a
     runtime toggle: whether strangers can read the index is not the sort of
     thing that should be flippable by a request.
+
+    `warm` starts loading the text encoder immediately instead of waiting for
+    the first search. Off by default because the test suite builds this app
+    hundreds of times and none of those want to load a 243 MB model; on for
+    the three commands a person actually starts.
     """
     app = FastAPI(title="TextSearchVDO", version="0.1.0")
     # One handle per worker thread; see db.ThreadLocalConnection.
@@ -154,22 +162,58 @@ def create_app(cfg: Config = DEFAULT, share: bool = False) -> FastAPI:
             return RedirectResponse("/pair", status_code=303)
         return await call_next(request)
 
-    # The text encoder is loaded once, lazily: it is only needed when someone
-    # actually types something, and loading it costs a second or two.
+    # The text encoder, loaded once.
+    #
+    # It used to be loaded lazily with no lock, which is fine with one person
+    # and wrong with several: seven phones searching for the first time all
+    # saw it missing and all started loading it, on a machine with one set of
+    # cores to do it with. Measured with seven, the first search took 10.7
+    # seconds; every later one took under 300ms.
+    #
+    # So: a lock, so it is built once however many arrive together, and a
+    # warm-up thread so that by the time anyone types, it is already there.
     text_encoder: dict[str, object] = {}
+    text_encoder_lock = threading.Lock()
+
+    def _load_text_encoder():
+        """Build the encoder if it is not built. Safe to call from anywhere."""
+        if "clip" in text_encoder:
+            return text_encoder["clip"]
+        with text_encoder_lock:
+            # Checked again inside the lock: several callers can get past the
+            # check above before any of them takes it.
+            if "clip" not in text_encoder:
+                from tsv.models.clip import build_clip
+
+                text_encoder["clip"] = build_clip(
+                    cfg.model_dir, cfg.clip.image_file, cfg.clip.text_file,
+                    crop_mode=cfg.clip.crop_mode,
+                    force_backend=cfg.clip.force_backend,
+                )
+        return text_encoder["clip"]
 
     def _query_vector(text: str):
         if not text.strip() or not cfg.has_clip_models:
             return None
-        if "clip" not in text_encoder:
-            from tsv.models.clip import build_clip
-
-            text_encoder["clip"] = build_clip(
-                cfg.model_dir, cfg.clip.image_file, cfg.clip.text_file,
-                crop_mode=cfg.clip.crop_mode, force_backend=cfg.clip.force_backend,
-            )
-        clip = text_encoder["clip"]
+        clip = _load_text_encoder()
         return clip.embed_text(text) if clip is not None else None
+
+    # Exposed so the loading behaviour can be tested directly rather than
+    # through a search, which would need real models to say anything.
+    app.state.load_text_encoder = _load_text_encoder
+
+    if warm and cfg.has_clip_models:
+        # A daemon thread, and every failure swallowed: this is an
+        # optimisation, and an optimisation that can stop the app starting is
+        # not one. Whatever goes wrong here happens again on the first real
+        # search, where there is somebody to report it to.
+        def _warm() -> None:
+            try:
+                _load_text_encoder()
+            except Exception:  # noqa: BLE001
+                pass
+
+        threading.Thread(target=_warm, name="warm-text-encoder", daemon=True).start()
 
     def _camera_filter(camera_id: int | None) -> tuple[str, list]:
         return ("AND camera_id = ?", [camera_id]) if camera_id else ("", [])

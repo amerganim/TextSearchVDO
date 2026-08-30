@@ -728,7 +728,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
     from tsv.api import create_app
 
-    app = create_app(_config(args))
+    app = create_app(_config(args), warm=True)
     print(f"http://{args.host}:{args.port}")
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     return 0
@@ -788,7 +788,7 @@ def cmd_share(args: argparse.Namespace) -> int:
         print("Nothing safe to share on. Pass --force to bind anyway.")
         return 1
 
-    app = create_app(cfg, share=True)
+    app = create_app(cfg, share=True, warm=True)
     # The middleware owns the code, so the console reads it from there rather
     # than holding a second copy that could drift out of step.
     code = app.state.pairing_code() if hasattr(app.state, "pairing_code") else None
