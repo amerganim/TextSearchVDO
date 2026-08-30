@@ -38,6 +38,17 @@ a fluent sentence nobody spoke. Speech joins the same index as everything
 else, so a name called out on camera is searchable even though no detector has
 a category for it.
 
+## Documents
+
+Two written-up views of the same system, both standalone HTML you can open in
+a browser:
+
+| | |
+| --- | --- |
+| [docs/how-it-works.html](docs/how-it-works.html) | A short technical brief. The cascade, the search fusion, and the measurements behind each decision. |
+| [docs/architecture.html](docs/architecture.html) | The longer piece. Why summarise-then-search cannot work, what each stage costs, and what testing found that reading would not. |
+| [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md) | The same ground in Markdown, for reading in a terminal. |
+
 ## Getting started
 
 ### On a machine that has never seen this before

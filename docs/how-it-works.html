@@ -1,0 +1,549 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How TextSearchVDO Works</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap">
+</head>
+<body>
+<style>
+  /* Dark-first, because the application is: these are its own chrome colours,
+     lifted from the window it ships with. */
+  :root {
+    --ground:      #0f1218;
+    --raised:      #161b24;
+    --raised-2:    #1c2330;
+    --hair:        #27303f;
+    --ink:         #e8ecf4;
+    --ink-dim:     #a4adbe;
+    --muted:       #8a93a6;
+    --accent:      #4da3ff;
+    --accent-soft: #1e3a5c;
+    --accent-wash: rgba(77,163,255,.12);
+    --keep:        #5fd0a0;
+    --drop:        #d9a441;
+    --shadow:      rgba(0,0,0,.4);
+  }
+
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --ground:      #f5f7fb;
+      --raised:      #ffffff;
+      --raised-2:    #eef2f8;
+      --hair:        #d7dfea;
+      --ink:         #131a25;
+      --ink-dim:     #414c5e;
+      --muted:       #5d687a;
+      --accent:      #1a6ed1;
+      --accent-soft: #cfe1f8;
+      --accent-wash: rgba(26,110,209,.09);
+      --keep:        #1f8a63;
+      --drop:        #9a6b12;
+      --shadow:      rgba(20,30,50,.10);
+    }
+  }
+  :root[data-theme="light"] {
+    --ground:      #f5f7fb;
+    --raised:      #ffffff;
+    --raised-2:    #eef2f8;
+    --hair:        #d7dfea;
+    --ink:         #131a25;
+    --ink-dim:     #414c5e;
+    --muted:       #5d687a;
+    --accent:      #1a6ed1;
+    --accent-soft: #cfe1f8;
+    --accent-wash: rgba(26,110,209,.09);
+    --keep:        #1f8a63;
+    --drop:        #9a6b12;
+    --shadow:      rgba(20,30,50,.10);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: "Source Serif 4", Georgia, serif;
+    font-size: 17px;
+    line-height: 1.65;
+    margin: 0;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 28px; }
+  .col  { max-width: 68ch; }
+
+  h1, h2, h3, .face {
+    font-family: Archivo, "Helvetica Neue", Arial, sans-serif;
+    text-wrap: balance;
+  }
+  code, .mono, table, .num {
+    font-family: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---------- top bar ---------- */
+  nav {
+    position: sticky; top: 0; z-index: 20;
+    background: color-mix(in srgb, var(--ground) 88%, transparent);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--hair);
+  }
+  nav .wrap {
+    display: flex; align-items: center; gap: 22px;
+    height: 54px; overflow-x: auto; scrollbar-width: none;
+  }
+  nav .wrap::-webkit-scrollbar { display: none; }
+  nav a {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--muted); text-decoration: none; white-space: nowrap;
+    padding: 4px 0; border-bottom: 2px solid transparent;
+  }
+  nav a:hover, nav a:focus-visible { color: var(--ink); border-bottom-color: var(--accent); }
+  nav .mark {
+    font-family: Archivo, sans-serif; font-weight: 700; font-size: 14px;
+    color: var(--ink); letter-spacing: -.01em; margin-right: 4px; white-space: nowrap;
+  }
+  nav .mark span { color: var(--accent); }
+
+  /* ---------- hero ---------- */
+  header { padding: 74px 0 54px; border-bottom: 1px solid var(--hair); }
+  .eyebrow {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px; letter-spacing: .16em; text-transform: uppercase;
+    color: var(--accent); margin: 0 0 20px;
+  }
+  h1 {
+    font-size: clamp(38px, 6vw, 62px); font-weight: 700; line-height: 1.04;
+    letter-spacing: -.025em; margin: 0 0 22px;
+  }
+  .standfirst { font-size: 21px; line-height: 1.55; color: var(--ink-dim); margin: 0 0 40px; }
+  .standfirst strong { color: var(--ink); font-weight: 600; }
+
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px;
+           background: var(--hair); border: 1px solid var(--hair); border-radius: 3px; overflow: hidden; }
+  .stat { background: var(--raised); padding: 18px 20px; }
+  .stat .n {
+    font-family: "IBM Plex Mono", monospace; font-weight: 600;
+    font-size: 27px; letter-spacing: -.02em; color: var(--ink); display: block;
+    font-variant-numeric: tabular-nums;
+  }
+  .stat .n em { font-style: normal; font-size: 15px; color: var(--muted); }
+  .stat .k { font-size: 13px; color: var(--muted); line-height: 1.4; display: block; margin-top: 5px;
+             font-family: Archivo, sans-serif; }
+
+  /* ---------- sections ---------- */
+  section { padding: 58px 0; border-bottom: 1px solid var(--hair); }
+  section:last-of-type { border-bottom: 0; }
+  h2 {
+    font-size: 13px; font-weight: 600; letter-spacing: .15em; text-transform: uppercase;
+    color: var(--accent); margin: 0 0 26px;
+    font-family: "IBM Plex Mono", monospace;
+  }
+  h3 { font-size: 23px; font-weight: 600; letter-spacing: -.015em; margin: 0 0 14px; line-height: 1.25; }
+  p { margin: 0 0 18px; }
+  .lede { font-size: 19px; color: var(--ink-dim); }
+  strong { font-weight: 600; }
+  a { color: var(--accent); }
+
+  code {
+    font-size: .87em; background: var(--raised-2); color: var(--ink);
+    padding: 1.5px 5px; border-radius: 3px; border: 1px solid var(--hair);
+  }
+
+  /* ---------- the cascade ---------- */
+  .cascade { display: flex; flex-direction: column; gap: 1px; background: var(--hair);
+             border: 1px solid var(--hair); border-radius: 3px; overflow: hidden; margin: 8px 0 28px; }
+  .stage { background: var(--raised); padding: 20px 22px; display: grid;
+           grid-template-columns: 54px 1fr; gap: 20px; align-items: start; }
+  .stage:hover { background: var(--raised-2); }
+  .stage .id {
+    font-family: "IBM Plex Mono", monospace; font-size: 12px; font-weight: 600;
+    color: var(--accent); border: 1px solid var(--accent-soft); border-radius: 3px;
+    padding: 3px 0; text-align: center; background: var(--accent-wash);
+  }
+  .stage h4 { font-family: Archivo, sans-serif; font-size: 17px; font-weight: 600;
+              margin: 0 0 6px; letter-spacing: -.01em; }
+  .stage p { margin: 0 0 8px; font-size: 16px; color: var(--ink-dim); line-height: 1.55; }
+  .stage .tools { font-family: "IBM Plex Mono", monospace; font-size: 12.5px; color: var(--muted); }
+  .stage .tools b { color: var(--ink-dim); font-weight: 500; }
+
+  /* ---------- funnel bar ---------- */
+  .funnel { margin: 0 0 30px; }
+  .funnel .bar { display: flex; height: 44px; border-radius: 3px; overflow: hidden;
+                 border: 1px solid var(--hair); }
+  .funnel .kept { background: var(--accent); width: 14%; }
+  .funnel .cut  { background: var(--raised-2); flex: 1;
+                  background-image: repeating-linear-gradient(-45deg,
+                    transparent 0 7px, var(--hair) 7px 8px); }
+  .funnel .legend { display: flex; justify-content: space-between; margin-top: 9px;
+                    font-family: "IBM Plex Mono", monospace; font-size: 12.5px; color: var(--muted); }
+  .funnel .legend b { color: var(--ink); font-weight: 500; }
+
+  /* ---------- tables ---------- */
+  .scroll { overflow-x: auto; margin: 0 0 26px; border: 1px solid var(--hair); border-radius: 3px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; background: var(--raised); }
+  th, td { text-align: left; padding: 11px 16px; border-bottom: 1px solid var(--hair); white-space: nowrap; }
+  th { font-weight: 600; color: var(--muted); font-size: 11.5px;
+       letter-spacing: .09em; text-transform: uppercase; background: var(--raised-2); }
+  tr:last-child td { border-bottom: 0; }
+  td.n { text-align: right; font-variant-numeric: tabular-nums; }
+  .win { color: var(--keep); font-weight: 600; }
+  .lose { color: var(--drop); }
+
+  /* ---------- callout ---------- */
+  .note { border-left: 2px solid var(--accent); background: var(--accent-wash);
+          padding: 16px 20px; margin: 0 0 26px; border-radius: 0 3px 3px 0; }
+  .note p:last-child { margin: 0; }
+  .note .label { font-family: "IBM Plex Mono", monospace; font-size: 11.5px;
+                 letter-spacing: .1em; text-transform: uppercase; color: var(--accent);
+                 display: block; margin-bottom: 7px; }
+
+  /* ---------- spec grid ---------- */
+  .spec { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1px;
+          background: var(--hair); border: 1px solid var(--hair); border-radius: 3px; overflow: hidden; }
+  .spec div { background: var(--raised); padding: 16px 18px; }
+  .spec dt { font-family: "IBM Plex Mono", monospace; font-size: 11.5px; letter-spacing: .09em;
+             text-transform: uppercase; color: var(--muted); margin: 0 0 7px; }
+  .spec dd { margin: 0; font-size: 15px; line-height: 1.5; color: var(--ink-dim); }
+  .spec dd b { color: var(--ink); font-weight: 600; }
+
+  footer { padding: 40px 0 64px; color: var(--muted); font-size: 14px; }
+
+  @media (max-width: 860px) {
+    .stats { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 640px) {
+    body { font-size: 16px; }
+    .stage { grid-template-columns: 1fr; gap: 10px; }
+    .stage .id { width: 54px; }
+    header { padding: 48px 0 40px; }
+    section { padding: 44px 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+
+<nav>
+  <div class="wrap">
+    <span class="mark">TextSearch<span>VDO</span></span>
+    <a href="#idea">The idea</a>
+    <a href="#cascade">Pipeline</a>
+    <a href="#search">Search</a>
+    <a href="#phone">Phone</a>
+    <a href="#calls">Decisions</a>
+    <a href="#measured">Measured</a>
+    <a href="#stack">Stack</a>
+  </div>
+</nav>
+
+<header>
+  <div class="wrap">
+    <div class="col">
+      <p class="eyebrow">Local-first video search</p>
+      <h1>Search hours of footage by describing what you are looking for.</h1>
+      <p class="standfirst">
+        Type <em>&ldquo;someone carrying a bag near the door&rdquo;</em> and get the moment, not the file.
+        Everything runs <strong>on the machine the video is already on</strong> &mdash; no upload,
+        no account, no cloud bill. A phone on the same WiFi can add clips to it in seconds.
+      </p>
+    </div>
+    <div class="stats">
+      <div class="stat">
+        <span class="n">86<em>%</em></span>
+        <span class="k">of footage discarded before any model runs</span>
+      </div>
+      <div class="stat">
+        <span class="n">28<em>ms</em></span>
+        <span class="k">median response, 7 phones at once</span>
+      </div>
+      <div class="stat">
+        <span class="n">0</span>
+        <span class="k">bytes leaving the machine</span>
+      </div>
+      <div class="stat">
+        <span class="n">613</span>
+        <span class="k">tests over 18k lines</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<section id="idea">
+  <div class="wrap col">
+    <h2>The idea</h2>
+    <h3>Index the footage. Don&rsquo;t summarise it.</h3>
+    <p class="lede">
+      The obvious way to make video searchable is to caption every frame with a large model.
+      It is also unaffordable: an hour of video is ninety thousand frames, and a caption model
+      that takes a second each turns one hour of footage into a day of compute.
+    </p>
+    <p>
+      So nothing here describes video. It <strong>indexes</strong> it &mdash; building a small set of
+      structured facts per moment (what moved, what was detected, who it was, what was said)
+      and searching those. The expensive models only ever see the fraction of frames that
+      survived everything cheaper.
+    </p>
+    <p>
+      That inversion is the whole architecture. Each stage is allowed to be expensive only
+      because the stage before it threw most of the work away.
+    </p>
+  </div>
+</section>
+
+<section id="cascade">
+  <div class="wrap">
+    <div class="col">
+      <h2>The pipeline</h2>
+      <h3>Six stages, each paid for by the one before it</h3>
+      <p>Measured on the current index: 44 minutes of video reduced to 6 minutes of candidate
+         moments before a single neural network was loaded.</p>
+    </div>
+
+    <div class="funnel">
+      <div class="bar">
+        <div class="kept"></div>
+        <div class="cut"></div>
+      </div>
+      <div class="legend">
+        <span><b>6 min</b> analysed</span>
+        <span><b>38 min</b> discarded by motion triage &mdash; 86%</span>
+      </div>
+    </div>
+
+    <div class="cascade">
+      <div class="stage">
+        <span class="id">00</span>
+        <div>
+          <h4>Motion triage</h4>
+          <p>Two tiers. The first reads compressed packet sizes without decoding anything &mdash;
+             a static camera produces small packets, so most of a night is rejected at the
+             cost of reading the file. Only what survives gets decoded for background
+             subtraction.</p>
+          <p class="tools"><b>PyAV</b> packet sizes &#183; <b>OpenCV</b> MOG2</p>
+        </div>
+      </div>
+      <div class="stage">
+        <span class="id">01</span>
+        <div>
+          <h4>Detection and tracking</h4>
+          <p>Objects per frame, then linked across frames into tracklets, so a person crossing
+             a room is one thing that moved rather than forty unrelated boxes.</p>
+          <p class="tools"><b>YOLO11n</b> ONNX &#183; <b>ByteTrack</b> association &#183; <b>YOLOX-tiny</b> where the licence matters</p>
+        </div>
+      </div>
+      <div class="stage">
+        <span class="id">02</span>
+        <div>
+          <h4>Zones and identity</h4>
+          <p>Regions drawn on the video turn positions into events &mdash; entered, left, crossed a
+             line, and which side of it. Faces are matched against people you have named once.</p>
+          <p class="tools"><b>SCRFD</b> + <b>ArcFace</b> &#183; <b>YuNet</b> + <b>SFace</b> as the shippable pair &#183; point-in-polygon events</p>
+        </div>
+      </div>
+      <div class="stage">
+        <span class="id">03</span>
+        <div>
+          <h4>Semantic embedding</h4>
+          <p>Each surviving moment gets a CLIP vector, which is what lets a description match
+             something nobody labelled &mdash; the difference between searching for <code>person</code>
+             and searching for <em>someone waiting by a door</em>.</p>
+          <p class="tools"><b>CLIP</b> image + text encoders, exported to ONNX separately</p>
+        </div>
+      </div>
+      <div class="stage">
+        <span class="id">04</span>
+        <div>
+          <h4>Captions</h4>
+          <p>A vision-language model describes what a tracked person is actually doing. This is
+             the only stage that produces the word &ldquo;bag&rdquo; or &ldquo;medicine&rdquo; &mdash; no detector has those
+             categories.</p>
+          <p class="tools"><b>Florence-2-base</b> ONNX, encoder&ndash;decoder with KV cache</p>
+        </div>
+      </div>
+      <div class="stage">
+        <span class="id">05</span>
+        <div>
+          <h4>Speech</h4>
+          <p>Voice activity detection gates the audio, so silence costs almost nothing. Output is
+             filtered on the model&rsquo;s own confidence &mdash; the failure mode of a transcript is not a
+             gap, it is a fluent sentence nobody said.</p>
+          <p class="tools"><b>Whisper base</b> via CTranslate2 &#183; int8 &#183; ~15&times; realtime on CPU</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="search">
+  <div class="wrap col">
+    <h2>Answering a query</h2>
+    <h3>Two searches, fused</h3>
+    <p>
+      Everything the stages produced &mdash; object labels, names, zone events, captions and speech &mdash;
+      is flattened into one text document per moment and indexed with SQLite&rsquo;s <code>FTS5</code>.
+      A query then runs twice: <strong>semantically</strong> against the CLIP vectors, and
+      <strong>lexically</strong> against that text.
+    </p>
+    <p>
+      The two rankings are combined with <strong>reciprocal rank fusion</strong>, which needs no
+      score calibration between two systems that do not share units. It matters more than it
+      sounds: a search for a spoken name returned the right moment ranked first even though four
+      other moments scored <em>higher</em> on visual similarity. The lexical hit carried it.
+    </p>
+    <div class="note">
+      <span class="label">Why speech earns its place</span>
+      <p>It is the only stage that can produce a name nobody enrolled, or a word for something
+         off camera &mdash; a knock, a doorbell, someone called from another room.</p>
+    </div>
+  </div>
+</section>
+
+<section id="phone">
+  <div class="wrap col">
+    <h2>The phone path</h2>
+    <h3>A QR code, a six-digit code, and no app to install</h3>
+    <p>
+      The same FastAPI server that backs the desktop window can be exposed to the local network.
+      A phone scans a QR code, types a six-digit pairing code, and gets a signed cookie naming a
+      row in a <code>devices</code> table &mdash; so revoking access is a delete, not a secret rotation.
+    </p>
+    <p>
+      Uploads are <strong>resumable by construction</strong>: the offset a client is told to
+      resume from is <code>os.stat</code> on the partial file, never a counter that could drift
+      from what is actually on disk. A dropped lift, a locked screen, a walk out of WiFi range &mdash;
+      the transfer picks up where the bytes end.
+    </p>
+    <p>
+      Until a device pairs it can reach exactly four paths. The allow-list is a closed set rather
+      than a <code>/static/</code> prefix, because the obvious version of that rule hands your
+      entire application to a device that has proved nothing.
+    </p>
+  </div>
+</section>
+
+<section id="calls">
+  <div class="wrap">
+    <div class="col">
+      <h2>Decisions</h2>
+      <h3>Three that shaped everything else</h3>
+    </div>
+    <div class="spec">
+      <div>
+        <dt>Licensing as an engineering constraint</dt>
+        <dd>The best detector available, <b>YOLO11</b>, is AGPL-3.0; the best face
+            stack, <b>InsightFace</b>, is research-only. Both are still the default, and
+            neither can ship. So a permissive alternative was built for each &mdash;
+            <b>YOLOX</b> (Apache-2.0) and <b>YuNet + SFace</b> (MIT / Apache-2.0) &mdash;
+            selectable rather than swapped in, because face-similarity thresholds differ
+            between stacks and changing one silently would invalidate every identity
+            already enrolled. YOLOX meant writing a decoder by hand: different tensor
+            layout, colour order and padding, each of which fails silently.</dd>
+      </div>
+      <div>
+        <dt>A runtime that stays small</dt>
+        <dd>PyTorch is two gigabytes. It appears here only inside a throwaway
+            <code>.venv-export</code> used to convert models, and never at inference. What
+            actually runs is <b>ONNX Runtime</b>, <b>NumPy</b> and <b>CTranslate2</b>.</dd>
+      </div>
+      <div>
+        <dt>Backends chosen by measurement</dt>
+        <dd>The runtime is selected at load time and the winner is reported, not assumed. On the
+            baseline laptop the surprise was that Intel&rsquo;s own CPU path lost to ONNX Runtime&rsquo;s &mdash;
+            so it sits last, despite the badge.</dd>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="measured">
+  <div class="wrap">
+    <div class="col">
+      <h2>Measured</h2>
+      <h3>Numbers that changed a decision</h3>
+      <p>The project&rsquo;s working rule is that a claim in a comment has to be something that was
+         run. Several plans died this way.</p>
+    </div>
+
+    <div class="scroll">
+      <table>
+        <caption class="mono" style="text-align:left;padding:11px 16px;color:var(--muted);font-size:12px;">
+          Inference backend &mdash; YOLO11n at 640px, i5-1235U
+        </caption>
+        <tr><th>Runtime</th><th>Device</th><th class="n">Per frame</th><th>Outcome</th></tr>
+        <tr><td>OpenVINO</td><td>Intel iGPU</td><td class="n">33 ms</td><td class="win">preferred</td></tr>
+        <tr><td>ONNX Runtime</td><td>CPU</td><td class="n">45 ms</td><td>fallback</td></tr>
+        <tr><td>OpenVINO</td><td>CPU</td><td class="n">53 ms</td><td class="lose">last, despite the badge</td></tr>
+      </table>
+    </div>
+
+    <div class="scroll">
+      <table>
+        <caption class="mono" style="text-align:left;padding:11px 16px;color:var(--muted);font-size:12px;">
+          Speech models &mdash; 35 s clip, CPU int8
+        </caption>
+        <tr><th>Model</th><th class="n">Size</th><th class="n">Time</th><th class="n">Speed</th><th>Result</th></tr>
+        <tr><td>Whisper base</td><td class="n">148 MB</td><td class="n">2 s</td><td class="n">15&times;</td><td class="win">kept 3 lines, 5/5 runs identical</td></tr>
+        <tr><td>Whisper small</td><td class="n">486 MB</td><td class="n">69 s</td><td class="n">0.5&times;</td><td class="lose">wrong script, kept nothing</td></tr>
+        <tr><td>Whisper medium</td><td class="n">1530 MB</td><td class="n">190 s</td><td class="n">0.18&times;</td><td class="lose">non-deterministic, kept nothing</td></tr>
+      </table>
+    </div>
+
+    <div class="scroll">
+      <table>
+        <caption class="mono" style="text-align:left;padding:11px 16px;color:var(--muted);font-size:12px;">
+          Concurrent phones &mdash; paired, over LAN, search + thumbnails + video scrubbing
+        </caption>
+        <tr><th>Clients</th><th class="n">Median</th><th class="n">p95</th><th class="n">Max</th><th class="n">Errors</th></tr>
+        <tr><td>1</td><td class="n">16 ms</td><td class="n">76 ms</td><td class="n">&mdash;</td><td class="n">0</td></tr>
+        <tr><td>5</td><td class="n">20 ms</td><td class="n">157 ms</td><td class="n">166 ms</td><td class="n">0</td></tr>
+        <tr><td>7</td><td class="n">28 ms</td><td class="n">260 ms</td><td class="n">295 ms</td><td class="n">0</td></tr>
+        <tr><td>12</td><td class="n">44 ms</td><td class="n">366 ms</td><td class="n">594 ms</td><td class="n">0</td></tr>
+      </table>
+    </div>
+
+    <div class="col">
+      <div class="note">
+        <span class="label">A bug this found</span>
+        <p>With seven phones, the <em>first</em> search took 10.7 seconds. The text encoder was
+          built lazily with no lock, so all seven arrivals found it missing and all seven started
+          building it. A mutex and a warm-up thread took the worst request to 611 ms.</p>
+      </div>
+      <p>Other measurements that overturned the plan: reusing CLIP as a body-identity signal
+        (same person 0.818, person vs. bird 0.805 &mdash; indistinguishable, so it was cut), and the
+        larger caption model, which lost the words <em>bag</em>, <em>carrying</em> and
+        <em>bed</em> and was rolled back.</p>
+    </div>
+  </div>
+</section>
+
+<section id="stack">
+  <div class="wrap">
+    <div class="col"><h2>Stack</h2></div>
+    <div class="spec">
+      <div><dt>Language</dt><dd><b>Python 3.14</b> &mdash; 18,483 lines, plus 6,933 of tests</dd></div>
+      <div><dt>Service</dt><dd><b>FastAPI</b> on <b>Uvicorn</b>, bound to loopback for the desktop window</dd></div>
+      <div><dt>Desktop shell</dt><dd><b>pywebview</b> over WebView2 &mdash; one implementation serves window, browser and phone</dd></div>
+      <div><dt>Inference</dt><dd><b>ONNX Runtime</b>, <b>OpenVINO</b>, <b>CTranslate2</b></dd></div>
+      <div><dt>Video</dt><dd><b>PyAV</b> for demux and stream-copy clip export; <b>OpenCV</b> for pixels</dd></div>
+      <div><dt>Store</dt><dd><b>SQLite</b> in WAL mode, schema v13, <b>FTS5</b> with a Porter tokenizer</dd></div>
+      <div><dt>Models on disk</dt><dd><b>1.2 GB</b> &mdash; detection, faces, CLIP, captions, speech</dd></div>
+      <div><dt>Network</dt><dd>HMAC-signed device cookies, chunked resumable upload, QR pairing</dd></div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap col">
+    <p class="mono" style="font-size:13px;">
+      Runs offline. Nothing is uploaded, and nothing needs an account.
+    </p>
+  </div>
+</footer>
+</body>
+</html>

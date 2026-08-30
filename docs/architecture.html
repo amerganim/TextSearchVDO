@@ -1,0 +1,1061 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TextSearchVDO Architecture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=JetBrains+Mono:wght@400;500;700&display=swap">
+</head>
+<body>
+<style>
+  :root {
+    --ground:    #F2F4F7;
+    --surface:   #FFFFFF;
+    --sunken:    #E8ECF2;
+    --ink:       #141821;
+    --muted:     #59637A;
+    --line:      #DBE0E8;
+    --line-firm: #C3CBD8;
+    --accent:    #B4740A;
+    --accent-dim:#F0E2C6;
+    --slate:     #33415C;
+    --solid:     #2C6E52;
+    --partial:   #B4740A;
+    --unknown:   #9E3B31;
+    --solid-bg:    #DFEDE6;
+    --partial-bg:  #F5E7CD;
+    --unknown-bg:  #F4DFDC;
+
+    --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --body: "Source Serif 4", Georgia, "Times New Roman", serif;
+    --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:    #10131A;
+      --surface:   #171C26;
+      --sunken:    #1D2430;
+      --ink:       #E6EAF2;
+      --muted:     #8E98AC;
+      --line:      #262D3B;
+      --line-firm: #3A465C;
+      --accent:    #FFB020;
+      --accent-dim:#3A2E14;
+      --slate:     #7C90B8;
+      --solid:     #55BE90;
+      --partial:   #FFB020;
+      --unknown:   #E4796A;
+      --solid-bg:    #163025;
+      --partial-bg:  #33280F;
+      --unknown-bg:  #35201C;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground:    #10131A;
+    --surface:   #171C26;
+    --sunken:    #1D2430;
+    --ink:       #E6EAF2;
+    --muted:     #8E98AC;
+    --line:      #262D3B;
+    --line-firm: #3A465C;
+    --accent:    #FFB020;
+    --accent-dim:#3A2E14;
+    --slate:     #7C90B8;
+    --solid:     #55BE90;
+    --partial:   #FFB020;
+    --unknown:   #E4796A;
+    --solid-bg:    #163025;
+    --partial-bg:  #33280F;
+    --unknown-bg:  #35201C;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 17px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    display: grid;
+    grid-template-columns: 1fr;
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 0 24px 96px;
+  }
+
+  @media (min-width: 1080px) {
+    .page {
+      grid-template-columns: 190px minmax(0, 1fr);
+      column-gap: 56px;
+      padding-right: 40px;
+    }
+  }
+
+  /* ---------- masthead ---------- */
+
+  .masthead {
+    grid-column: 1 / -1;
+    padding: 64px 0 34px;
+    border-bottom: 2px solid var(--ink);
+    margin-bottom: 40px;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 18px;
+  }
+
+  h1 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(2.4rem, 6vw, 3.9rem);
+    line-height: 1.02;
+    letter-spacing: -.028em;
+    margin: 0 0 20px;
+    text-wrap: balance;
+  }
+
+  .thesis {
+    font-size: clamp(1.05rem, 2.1vw, 1.28rem);
+    line-height: 1.5;
+    color: var(--muted);
+    max-width: 34em;
+    margin: 0 0 34px;
+  }
+
+  .thesis em { color: var(--ink); font-style: normal; font-weight: 600; }
+
+  .readout {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0;
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    background: var(--surface);
+    overflow: hidden;
+  }
+
+  .readout div {
+    flex: 1 1 150px;
+    padding: 13px 16px;
+    border-right: 1px solid var(--line);
+  }
+
+  .readout div:last-child { border-right: 0; }
+
+  .readout dt {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 5px;
+  }
+
+  .readout dd {
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: 1.02rem;
+    margin: 0;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .readout .lit { color: var(--accent); }
+
+  /* ---------- rail ---------- */
+
+  .rail { display: none; }
+
+  @media (min-width: 1080px) {
+    .rail {
+      display: block;
+      grid-column: 1;
+      align-self: start;
+      position: sticky;
+      top: 32px;
+      padding-top: 4px;
+    }
+    .rail ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 9px; }
+    .rail a {
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: .05em;
+      color: var(--muted);
+      text-decoration: none;
+      display: block;
+      line-height: 1.4;
+      border-left: 2px solid var(--line);
+      padding-left: 11px;
+    }
+    .rail a:hover, .rail a:focus-visible { color: var(--accent); border-left-color: var(--accent); }
+  }
+
+  /* ---------- flow ---------- */
+
+  main { grid-column: -2 / -1; min-width: 0; }
+
+  section { margin-bottom: 66px; scroll-margin-top: 24px; }
+
+  h2 {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 1.72rem;
+    letter-spacing: -.017em;
+    line-height: 1.15;
+    margin: 0 0 8px;
+    text-wrap: balance;
+  }
+
+  h3 {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 1.09rem;
+    letter-spacing: -.008em;
+    margin: 34px 0 6px;
+  }
+
+  .kicker {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .15em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 12px;
+  }
+
+  p { margin: 0 0 17px; max-width: 66ch; }
+
+  a { color: var(--accent); text-underline-offset: 2px; }
+
+  code {
+    font-family: var(--mono);
+    font-size: .84em;
+    background: var(--sunken);
+    border-radius: 3px;
+    padding: .1em .34em;
+  }
+
+  strong { font-weight: 600; }
+
+  .lede { font-size: 1.1rem; color: var(--muted); max-width: 60ch; }
+
+  /* ---------- figures ---------- */
+
+  figure {
+    margin: 30px 0;
+    padding: 26px 22px 18px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    overflow-x: auto;
+  }
+
+  figure svg { display: block; width: 100%; min-width: 620px; max-width: 100%; height: auto; }
+
+  figcaption {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    line-height: 1.55;
+    color: var(--muted);
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px solid var(--line);
+    max-width: 78ch;
+  }
+
+  /* ---------- tier table ---------- */
+
+  .tiers { display: grid; gap: 12px; margin: 26px 0 8px; }
+
+  .tier {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 6px;
+    padding: 16px 18px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--tier);
+    border-radius: 3px;
+  }
+
+  @media (min-width: 700px) {
+    .tier { grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); column-gap: 26px; align-items: start; }
+  }
+
+  .tier--solid   { --tier: var(--solid); }
+  .tier--partial { --tier: var(--partial); }
+  .tier--unknown { --tier: var(--unknown); }
+
+  .tier q { font-size: 1.02rem; font-style: italic; quotes: "\201C" "\201D"; display: block; }
+  .tier .verdict { display: flex; flex-direction: column; gap: 5px; }
+
+  .chip {
+    align-self: start;
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    border-radius: 2px;
+    color: var(--tier);
+    background: var(--tier-bg);
+  }
+
+  .tier--solid   .chip { --tier-bg: var(--solid-bg); }
+  .tier--partial .chip { --tier-bg: var(--partial-bg); }
+  .tier--unknown .chip { --tier-bg: var(--unknown-bg); }
+
+  .tier .why { font-size: .93rem; color: var(--muted); line-height: 1.5; }
+
+  /* ---------- findings ---------- */
+
+  .finding {
+    padding: 20px 0 4px;
+    border-top: 1px solid var(--line);
+  }
+
+  .finding:first-of-type { border-top: 1px solid var(--line-firm); }
+
+  .finding .tag {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .07em;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 5px;
+  }
+
+  .finding h3 { margin: 0 0 8px; }
+
+  .symptom {
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--muted);
+    background: var(--sunken);
+    border-radius: 3px;
+    padding: 11px 14px;
+    margin: 12px 0 0;
+    max-width: 70ch;
+  }
+
+  .symptom b { color: var(--ink); font-weight: 700; }
+
+  /* ---------- phases ---------- */
+
+  .phases { display: grid; gap: 0; margin-top: 24px; border-top: 1px solid var(--line-firm); }
+
+  .phase {
+    display: grid;
+    grid-template-columns: 46px minmax(0, 1fr);
+    column-gap: 18px;
+    padding: 17px 0;
+    border-bottom: 1px solid var(--line);
+    align-items: start;
+  }
+
+  @media (min-width: 720px) {
+    .phase { grid-template-columns: 46px minmax(0, 1fr) 128px; }
+  }
+
+  .phase .num {
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: 1.2rem;
+    color: var(--line-firm);
+    line-height: 1.3;
+  }
+
+  .phase--done .num { color: var(--accent); }
+
+  .phase h3 { margin: 0 0 3px; font-size: 1.02rem; }
+  .phase p { margin: 0; font-size: .94rem; color: var(--muted); max-width: 58ch; }
+
+  .phase .status {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding-top: 4px;
+  }
+
+  .phase--done .status { color: var(--accent); font-weight: 700; }
+
+  /* ---------- stack ---------- */
+
+  .stack { width: 100%; border-collapse: collapse; margin-top: 22px; font-size: .95rem; }
+
+  .stack th {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    text-align: left;
+    font-weight: 500;
+    padding: 0 14px 9px 0;
+    border-bottom: 1px solid var(--line-firm);
+  }
+
+  .stack td { padding: 12px 14px 12px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .stack td:first-child { font-family: var(--mono); font-size: .85rem; white-space: nowrap; }
+  .stack td:last-child { color: var(--muted); font-size: .92rem; }
+
+  .risks { margin: 22px 0 0; padding: 0; list-style: none; display: grid; gap: 14px; }
+  .risks li { padding-left: 20px; position: relative; max-width: 66ch; }
+  .risks li::before {
+    content: "";
+    position: absolute;
+    left: 0; top: .62em;
+    width: 7px; height: 7px;
+    background: var(--unknown);
+    border-radius: 1px;
+  }
+
+  .closer {
+    border-top: 2px solid var(--ink);
+    padding-top: 26px;
+    margin-top: 12px;
+  }
+
+  .closer p { font-size: 1.06rem; }
+
+  figure svg text { font-family: var(--mono); }
+  figure svg .s { font-family: var(--body); }
+  figure svg .m { font-family: var(--mono); }
+  figure svg .acc { fill: var(--accent); }
+  figure svg .acc-s { stroke: var(--accent); }
+  figure svg .sunk { fill: var(--sunken); }
+
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+
+  .note-swap {
+    border-left: 2px solid var(--accent); background: var(--accent-dim);
+    padding: 14px 18px; margin: 22px 0; font-size: .95em;
+  }
+</style>
+<div class="page">
+
+  <header class="masthead">
+    <p class="eyebrow">TextSearchVDO &middot; Reference &middot; 27 Aug 2026</p>
+    <h1>Searching a week of footage</h1>
+    <p class="thesis">
+      Drop a recording on a window, ask when your son went outside, get the timestamp
+      and the frame &mdash; with every model running on the user's own machine, and no
+      footage ever leaving the device. The architecture is <em>index, retrieve,
+      verify</em>. It is not summarise-then-search.
+    </p>
+    <dl class="readout">
+      <div><dt>Built</dt><dd class="lit">Stages 0&ndash;3</dd></div>
+      <div><dt>Answering</dt><dd class="lit">Partial</dd></div>
+      <div><dt>Tests</dt><dd>298 passing</dd></div>
+      <div><dt>Models</dt><dd>5 &middot; no LLM</dd></div>
+      <div><dt>Baseline HW</dt><dd>CPU / iGPU</dd></div>
+    </dl>
+  </header>
+
+  <nav class="rail" aria-label="Sections">
+    <ol>
+      <li><a href="#reframe">The reframe</a></li>
+      <li><a href="#questions">What is answerable</a></li>
+      <li><a href="#cascade">The cascade</a></li>
+      <li><a href="#stage0">Stage 0 mechanism</a></li>
+      <li><a href="#models">The models</a></li>
+      <li><a href="#nollm">Why no LLM</a></li>
+      <li><a href="#findings">What testing found</a></li>
+      <li><a href="#app">The app</a></li>
+      <li><a href="#phases">Where it stands</a></li>
+      <li><a href="#uncalibrated">Not calibrated</a></li>
+    </ol>
+  </nav>
+
+  <main>
+
+    <section id="reframe">
+      <p class="kicker">The central decision</p>
+      <h2>Why summarise-then-search cannot work</h2>
+      <p class="lede">
+        The obvious design is to summarise the video, then search the summary. It fails
+        for a reason worth stating precisely.
+      </p>
+      <p>
+        A summary of twenty-four hours of hallway footage will never contain
+        <em>father took his medicine at 08:47</em> unless something already forced a model
+        to look at that moment and write it down. Summarisation is lossy by construction,
+        so a search over summaries is a search over a document that has already discarded
+        the thing being looked for.
+      </p>
+      <p>
+        The working shape is the opposite. Build a dense, timestamped, multi-modal index
+        over the footage; let the query search <em>that</em>; then have a model verify the
+        top candidates before answering. Summaries become a by-product &mdash; a daily digest
+        worth having &mdash; rather than the search substrate.
+      </p>
+    </section>
+
+    <section id="questions">
+      <p class="kicker">Expectations</p>
+      <h2>Three questions, three different problems</h2>
+      <p>
+        These read as one feature and are not. The split was called before any code was
+        written; what follows is what each tier actually does now.
+      </p>
+
+      <div class="tiers">
+        <div class="tier tier--solid">
+          <q>When did my son go outside?</q>
+          <div class="verdict">
+            <span class="chip">Built</span>
+            <span class="why">Person identity plus a zone crossing. Verified end to end:
+            enrolling one sighting names the same person elsewhere at 0.998 similarity and
+            refuses a stranger at 0.034. Returns exact timestamps.</span>
+          </div>
+        </div>
+        <div class="tier tier--partial">
+          <q>When did father take his medicine?</q>
+          <div class="verdict">
+            <span class="chip">Not built</span>
+            <span class="why">Fine-grained action on a small object. Needs a
+            vision-language model captioning person crops, which nothing here does. The
+            one genuinely missing capability.</span>
+          </div>
+        </div>
+        <div class="tier tier--unknown">
+          <q>Who broke the glasses?</q>
+          <div class="verdict">
+            <span class="chip">Research-grade</span>
+            <span class="why">Causal attribution over a state change. The honest version
+            surfaces everyone present in the window and lets a person decide. Unchanged
+            from the original assessment.</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="cascade">
+      <p class="kicker">Architecture</p>
+      <h2>Cheap stages gate expensive ones</h2>
+      <p>
+        CCTV is 90&ndash;97% static. The entire performance argument is that nothing expensive
+        should ever see a frame a cheaper filter could have discarded. Each stage runs
+        only on what the previous one passed.
+      </p>
+
+      <figure>
+        <svg viewBox="0 0 890 300" role="img" aria-label="Five pipeline stages left to right; the share of total footage each must process shrinks from 100 percent at motion segmentation to about 4 percent at the vision-language stage, which is not built.">
+          <defs>
+            <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+
+          <line x1="30" y1="196" x2="866" y2="196" stroke="currentColor" stroke-width="1.5" opacity=".45"/>
+
+          <rect x="44" y="76" width="104" height="120" class="acc" opacity=".92"/>
+          <text x="96" y="66" text-anchor="middle" font-size="13" font-weight="700" fill="currentColor" class="m">100%</text>
+          <text x="96" y="218" text-anchor="middle" font-size="11" font-weight="700" fill="currentColor" class="m">STAGE 0</text>
+          <text x="96" y="236" text-anchor="middle" font-size="12.5" fill="currentColor" class="s">Motion</text>
+          <text x="96" y="252" text-anchor="middle" font-size="12.5" fill="currentColor" class="s">segmentation</text>
+
+          <line x1="160" y1="140" x2="204" y2="140" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+          <text x="182" y="128" text-anchor="middle" font-size="10" fill="currentColor" opacity=".7" class="m">~27%</text>
+
+          <rect x="216" y="130" width="104" height="66" class="acc" opacity=".92"/>
+          <text x="268" y="120" text-anchor="middle" font-size="13" font-weight="700" fill="currentColor" class="m">27%</text>
+          <text x="268" y="218" text-anchor="middle" font-size="11" font-weight="700" fill="currentColor" class="m">STAGE 1</text>
+          <text x="268" y="236" text-anchor="middle" font-size="12.5" fill="currentColor" class="s">Detection</text>
+          <text x="268" y="252" text-anchor="middle" font-size="12.5" fill="currentColor" class="s">+ tracking</text>
+
+          <line x1="332" y1="163" x2="376" y2="163" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+
+          <rect x="388" y="132" width="104" height="64" class="acc" opacity=".92"/>
+          <text x="440" y="122" text-anchor="middle" font-size="13" font-weight="700" fill="currentColor" class="m">25%</text>
+          <text x="440" y="218" text-anchor="middle" font-size="11" font-weight="700" fill="currentColor" class="m">STAGE 2</text>
+          <text x="440" y="236" text-anchor="middle" font-size="12.5" fill="currentColor" class="s">Identity</text>
+          <text x="440" y="252" text-anchor="middle" font-size="12.5" fill="currentColor" class="s">+ zones</text>
+
+          <line x1="504" y1="164" x2="548" y2="164" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+
+          <rect x="560" y="140" width="104" height="56" class="acc" opacity=".92"/>
+          <text x="612" y="130" text-anchor="middle" font-size="13" font-weight="700" fill="currentColor" class="m">25%</text>
+          <text x="612" y="218" text-anchor="middle" font-size="11" font-weight="700" fill="currentColor" class="m">STAGE 3</text>
+          <text x="612" y="236" text-anchor="middle" font-size="12.5" fill="currentColor" class="s">CLIP +</text>
+          <text x="612" y="252" text-anchor="middle" font-size="12.5" fill="currentColor" class="s">retrieval</text>
+
+          <line x1="676" y1="168" x2="720" y2="168" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+
+          <rect x="732" y="168" width="104" height="28" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="4 3" opacity=".55"/>
+          <text x="784" y="158" text-anchor="middle" font-size="11" font-weight="700" fill="currentColor" opacity=".7" class="m">~4%</text>
+          <text x="784" y="218" text-anchor="middle" font-size="11" font-weight="700" fill="currentColor" class="m">STAGE 4</text>
+          <text x="784" y="236" text-anchor="middle" font-size="12.5" fill="currentColor" class="s">VLM captions,</text>
+          <text x="784" y="252" text-anchor="middle" font-size="12.5" fill="currentColor" class="s">audio</text>
+
+          <rect x="44" y="20" width="14" height="11" class="acc" opacity=".92"/>
+          <text x="66" y="30" font-size="10.5" fill="currentColor" class="m">built and measured</text>
+          <rect x="212" y="20" width="14" height="11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="4 3" opacity=".55"/>
+          <text x="234" y="30" font-size="10.5" fill="currentColor" class="m">not built</text>
+        </svg>
+        <figcaption>
+          Bar height is the share of total wall-clock footage a stage must process, on a
+          perceptual scale. Stages 0 to 3 are built; the ~27% pass-through is measured.
+          Stage 4's captioning and audio work is the remaining gap, and would run on the
+          small slice of footage that reaches it.
+        </figcaption>
+      </figure>
+    </section>
+
+    <section id="stage0">
+      <p class="kicker">The cheapest stage</p>
+      <h2>Stage 0 is itself two tiers</h2>
+      <p>
+        <strong>Tier A</strong> triages from compressed packet sizes without decoding
+        anything. In an inter-frame codec a P-frame encodes only what changed, so packet
+        size tracks motion, and demuxing is bounded by disk speed rather than CPU.
+        <strong>Tier B</strong> then decodes only what Tier A passed, at three frames a
+        second and 320 pixels wide, and scores it with MOG2 background subtraction.
+      </p>
+      <p>
+        Tier A is deliberately tuned for recall over precision: a false candidate costs a
+        little decode time, whereas a miss is unrecoverable, because Tier B never sees what
+        Tier A drops. That asymmetry is why the third path below exists.
+      </p>
+
+      <figure>
+        <svg viewBox="0 0 890 320" role="img" aria-label="Flow diagram: a recording is demuxed by Tier A, whose bins take one of three paths; idle bins are discarded without being decoded, hot bins pass to Tier B, and blind bins containing no P-frames bypass Tier A's judgement entirely and are also sent to Tier B.">
+          <defs>
+            <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+            </marker>
+            <marker id="ar2a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" class="acc"/>
+            </marker>
+          </defs>
+
+          <rect x="16" y="128" width="106" height="56" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
+          <text x="69" y="152" text-anchor="middle" font-size="13" fill="currentColor" class="s">Recording</text>
+          <text x="69" y="169" text-anchor="middle" font-size="10" fill="currentColor" opacity=".65" class="m">h264 / h265</text>
+
+          <line x1="122" y1="156" x2="158" y2="156" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar2)"/>
+
+          <rect x="170" y="118" width="140" height="76" rx="2" class="sunk" stroke="currentColor" stroke-width="1.5"/>
+          <text x="240" y="142" text-anchor="middle" font-size="11" font-weight="700" fill="currentColor" class="m">TIER A</text>
+          <text x="240" y="160" text-anchor="middle" font-size="12.5" fill="currentColor" class="s">demux packet sizes</text>
+          <text x="240" y="178" text-anchor="middle" font-size="10" fill="currentColor" opacity=".65" class="m">no decode</text>
+
+          <polyline points="310,136 356,136 356,84 424,84" fill="none" stroke-width="2" marker-end="url(#ar2a)" class="acc-s"/>
+          <text x="392" y="74" text-anchor="middle" font-size="10.5" font-weight="700" class="m acc">blind &middot; no P-frames</text>
+          <text x="392" y="106" text-anchor="middle" font-size="10" opacity=".8" class="m acc">cannot judge &mdash; pass anyway</text>
+
+          <line x1="310" y1="176" x2="424" y2="176" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar2)"/>
+          <text x="367" y="166" text-anchor="middle" font-size="10.5" fill="currentColor" class="m">hot</text>
+          <text x="367" y="196" text-anchor="middle" font-size="10" fill="currentColor" opacity=".65" class="m">over rolling floor</text>
+
+          <line x1="240" y1="194" x2="240" y2="242" stroke="currentColor" stroke-width="1.5" stroke-dasharray="5 4" opacity=".55" marker-end="url(#ar2)"/>
+          <rect x="170" y="246" width="140" height="46" rx="2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="5 4" opacity=".55"/>
+          <text x="240" y="268" text-anchor="middle" font-size="12.5" fill="currentColor" opacity=".7" class="s">Discarded</text>
+          <text x="240" y="284" text-anchor="middle" font-size="10" fill="currentColor" opacity=".6" class="m">never decoded</text>
+          <text x="326" y="222" font-size="10.5" fill="currentColor" opacity=".7" class="m">~73% of footage</text>
+
+          <rect x="424" y="60" width="164" height="140" rx="2" class="sunk" stroke="currentColor" stroke-width="1.5"/>
+          <text x="506" y="88" text-anchor="middle" font-size="11" font-weight="700" fill="currentColor" class="m">TIER B</text>
+          <text x="506" y="110" text-anchor="middle" font-size="12.5" fill="currentColor" class="s">decode 3 fps @ 320 px</text>
+          <text x="506" y="130" text-anchor="middle" font-size="12.5" fill="currentColor" class="s">MOG2 subtraction</text>
+          <text x="506" y="150" text-anchor="middle" font-size="12.5" fill="currentColor" class="s">shadow + noise gate</text>
+          <text x="506" y="172" text-anchor="middle" font-size="10" fill="currentColor" opacity=".65" class="m">IR-flip guard</text>
+
+          <line x1="588" y1="130" x2="640" y2="130" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar2)"/>
+          <text x="614" y="120" text-anchor="middle" font-size="10" fill="currentColor" opacity=".7" class="m">trace</text>
+
+          <rect x="652" y="94" width="180" height="72" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
+          <text x="742" y="120" text-anchor="middle" font-size="13" fill="currentColor" class="s">Segments</text>
+          <text x="742" y="140" text-anchor="middle" font-size="10" fill="currentColor" opacity=".65" class="m">hysteresis &middot; gap merge</text>
+          <text x="742" y="155" text-anchor="middle" font-size="10" fill="currentColor" opacity=".65" class="m">pre / post roll</text>
+        </svg>
+        <figcaption>
+          The amber path is the one prose keeps losing: a stretch with no P-frames carries
+          no motion signal at all, so Tier A cannot judge it either way. Scoring it would
+          read as "idle" and silently destroy whatever happened there &mdash; it is passed to
+          Tier B untriaged instead.
+        </figcaption>
+      </figure>
+    </section>
+
+    <section id="models">
+      <p class="kicker">What actually runs</p>
+      <h2>Five small vision models, and where each one runs</h2>
+      <p>
+        None of these are runtime dependencies. <code>torch</code>,
+        <code>ultralytics</code>, <code>transformers</code> and <code>insightface</code>
+        are used once, from a throwaway environment, purely to produce ONNX files. At
+        inference the app is ONNX Runtime, numpy and CTranslate2.
+      </p>
+
+      <table class="stack">
+        <thead>
+          <tr><th scope="col">Model</th><th scope="col">Size</th><th scope="col">Job</th><th scope="col">Runs on</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>YOLO11n</td><td>10.7 MB</td><td>Find objects &mdash; people, vehicles, animals, bags</td><td>Intel iGPU</td></tr>
+          <tr><td>SCRFD det_500m</td><td>2.5 MB</td><td>Find faces and their five landmarks</td><td>CPU</td></tr>
+          <tr><td>ArcFace w600k_mbf</td><td>13.6 MB</td><td>512-d face vector for identity</td><td>CPU</td></tr>
+          <tr><td>CLIP ViT-B/32 image</td><td>351 MB</td><td>Frames and crops into meaning vectors</td><td>CPU</td></tr>
+          <tr><td>CLIP ViT-B/32 text</td><td>254 MB</td><td>Your words into the same space</td><td>CPU</td></tr>
+        </tbody>
+      </table>
+
+      <p class="note-swap">
+        These are the defaults, and two of them cannot be shipped: YOLO11 is AGPL-3.0 and
+        InsightFace's SCRFD and ArcFace are released for research only. A permissively
+        licensed alternative now exists for each &mdash; YOLOX-tiny under Apache-2.0, and
+        YuNet and SFace under MIT and Apache-2.0 &mdash; reachable through
+        <code>tsv setup --detector yolox-tiny</code> and the permissive face
+        configuration. They are a deliberate opt-in rather than a swap, because the
+        cosine thresholds differ between face stacks and a silent change would invalidate
+        every identity already enrolled.
+      </p>
+
+      <h3>The best backend is a property of the model, not the machine</h3>
+      <p>
+        Measured per forward pass on the baseline laptop &mdash; an i5-1235U with Intel UHD
+        graphics and no discrete GPU:
+      </p>
+
+      <table class="stack">
+        <thead>
+          <tr><th scope="col">Model</th><th scope="col">Intel iGPU</th><th scope="col">CPU</th><th scope="col">Winner</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>YOLO11n @ 640</td><td>33 ms</td><td>45 ms</td><td>iGPU</td></tr>
+          <tr><td>SCRFD @ 640</td><td>54 ms</td><td>24 ms</td><td>CPU</td></tr>
+          <tr><td>ArcFace @ 112</td><td>24 ms</td><td>9 ms</td><td>CPU</td></tr>
+          <tr><td>CLIP image @ 224</td><td>82 ms</td><td>51 ms</td><td>CPU</td></tr>
+          <tr><td>CLIP text @ 77 tok</td><td>34 ms</td><td>36 ms</td><td>a wash</td></tr>
+        </tbody>
+      </table>
+
+      <p>
+        It is not about model size &mdash; CLIP's image encoder is by far the largest graph
+        here and still loses on the iGPU. Only a sustained, convolution-heavy workload
+        keeps that GPU busy enough to pay back the cost of moving data to it. Compile time
+        compounds it: the iGPU takes four to six seconds to compile a graph the CPU loads
+        in half a second, which a user feels on their first search. So the detector runs on
+        the iGPU while the face and CLIP stacks run on the CPU, in the same pass.
+      </p>
+    </section>
+
+    <section id="nollm">
+      <p class="kicker">The question everyone asks</p>
+      <h2>There is no LLM in the answer path</h2>
+      <p class="lede">
+        Nothing generates text when a question is answered. A vision-language model does
+        run during indexing, to caption what a tracked person is doing &mdash; but by the
+        time you type, its output is just more words in the index.
+      </p>
+      <p>
+        Question understanding is <strong>entity grounding, not language
+        understanding</strong>, and that is what lets it work with no model at all. The
+        vocabulary a question can draw on is closed and already in the database: the people
+        who were enrolled, the zones that were drawn, the classes the detector knows, the
+        cameras that exist, and dates. Matching against that is reliable in a way that
+        parsing arbitrary English is not, and it costs nothing to run.
+      </p>
+      <p>
+        Whatever survives after the known entities are lifted out becomes the CLIP query,
+        which handles the genuinely open-vocabulary half &mdash; "in a red jacket", "carrying
+        a box". Everything the index knows exactly is answered exactly; only the fuzzy
+        remainder is left to a similarity score.
+      </p>
+      <p>
+        The limitation is honest. The direction phrases &mdash; <em>went out</em>, <em>came
+        home</em> &mdash; are a fixed list, not an understanding of English, and real use will
+        throw up phrasings that need adding.
+      </p>
+      <p>
+        Both of the pieces this section once listed as missing are now built, and
+        neither added a torch runtime dependency: Florence-2-base captions person crops
+        through ONNX Runtime, which is what makes the <em>medicine</em> class of question
+        answerable at all, and Whisper reads speech through CTranslate2. The cost warning
+        stands &mdash; on a CPU-only machine, captioning a day of footage is an overnight
+        batch rather than something to run while waiting.
+      </p>
+    </section>
+
+    <section id="findings">
+      <p class="kicker">Hard-won</p>
+      <h2>What testing found that reading would not</h2>
+      <p>
+        Each of these was silent. The code ran, produced plausible output, and was wrong
+        in a way no exception would ever surface.
+      </p>
+
+      <div class="finding">
+        <span class="tag">GOP SAWTOOTH</span>
+        <h3>A P-frame's cost depends on its position in the GOP</h3>
+        <p>
+          Frames just after a keyframe have little residual left to code, so with a fixed
+          GOP the raw sizes carry a periodic swing larger than a walking person. Each
+          packet is now scored against the median size for its own position in the GOP.
+        </p>
+        <p class="symptom">Idle-floor variation before: <b>11.8%</b> &nbsp;&rarr;&nbsp; after: <b>3.4%</b></p>
+      </div>
+
+      <div class="finding">
+        <span class="tag">LOCAL ALL-INTRA</span>
+        <h3>Encoders stop emitting P-frames when a scene gets noisy</h3>
+        <p>
+          Heavy IR noise trips scene-cut detection on every frame and the encoder falls
+          back to all keyframes. A whole-file check misses it: the global ratio stays low
+          while half the recording is silently unreadable.
+        </p>
+        <p class="symptom">
+          After an IR flip: <b>600 of 600</b> frames were keyframes, while the file-wide
+          ratio read <b>0.586</b> &mdash; under the threshold, so its entire second half
+          scored zero.
+        </p>
+      </div>
+
+      <div class="finding">
+        <span class="tag">MEDIAN BASELINE</span>
+        <h3>Motion only ever pushes bins upward</h3>
+        <p>
+          The idle floor was taken as the median, which is only correct when activity is a
+          minority. On a short file where someone is on screen half the time, the median
+          sits inside the activity and hides exactly what raised it. Plenty of NVRs write
+          one-minute files, so that case is normal rather than exotic. It is now a low
+          quantile.
+        </p>
+      </div>
+
+      <div class="finding">
+        <span class="tag">SILENT EXPORT</span>
+        <h3>The CLIP graph returned the wrong tensor</h3>
+        <p>
+          <code>get_image_features</code> returns a tuple in transformers 5.x, so the ONNX
+          export emitted two outputs and the first was raw per-token hidden state, not the
+          projection. Vectors came out 38400 long instead of 512. Nothing crashed; search
+          would simply have been meaningless.
+        </p>
+      </div>
+
+      <div class="finding">
+        <span class="tag">ALIGNMENT</span>
+        <h3>A face crop is not a face</h3>
+        <p>
+          ArcFace is trained on faces warped so the eyes, nose and mouth corners sit at
+          fixed positions. A plain box crop produces embeddings that look plausible and
+          match the wrong people.
+        </p>
+        <p class="symptom">
+          Same face, aligned against itself: <b>0.99</b>. From a plain box crop:
+          <b>0.68</b>. Two different people: <b>0.00</b>.
+        </p>
+      </div>
+
+      <div class="finding">
+        <span class="tag">CONFIDENTLY WRONG</span>
+        <h3>Answering about someone who was never enrolled</h3>
+        <p>
+          Asking about a person the index had never heard of left their name in the fuzzy
+          remainder while the zone and direction still matched &mdash; so it answered with a
+          confident set of timestamps belonging to <em>a different person</em>. A caveat
+          underneath was not enough. A capitalised leftover is now a refusal.
+        </p>
+      </div>
+
+      <div class="finding">
+        <span class="tag">CONCURRENCY</span>
+        <h3>One SQLite handle across a threadpool</h3>
+        <p>
+          <code>check_same_thread=False</code> silences the ownership check but does not
+          make a connection safe. A page requesting several thumbnails at once raised
+          <em>bad parameter or other API misuse</em>. Latent since the first phase; the
+          search page simply made the browser concurrent enough to expose it.
+        </p>
+      </div>
+
+      <div class="finding">
+        <span class="tag">INVISIBLE OVERLAY</span>
+        <h3>A hidden element that was not hidden</h3>
+        <p>
+          The video player's backdrop is <code>position: fixed</code> with
+          <code>display: flex</code>, and that declaration overrides its own
+          <code>hidden</code> attribute &mdash; the rule implementing <code>[hidden]</code> is
+          a user-agent rule, which loses to any author rule. The overlay covered the whole
+          window from page load and swallowed every click.
+        </p>
+        <p class="symptom">
+          <code>elementFromPoint</code> at the centre of the app returned <b>video</b>.
+          Missed originally by checking the <code>hidden</code> property rather than what
+          rendered.
+        </p>
+      </div>
+    </section>
+
+    <section id="app">
+      <p class="kicker">The product</p>
+      <h2>A window you drop a video on</h2>
+      <p>
+        The pipeline works from a command line, but that is not a product. There is now a
+        native window: drop a video, watch it being read, type what you are looking for,
+        click a frame to play from just before that moment. If nothing matches it says so
+        rather than handing back the closest three frames in the library.
+      </p>
+      <p>
+        It is the same local server in a WebView2 frame rather than a second
+        implementation, so the window, a browser and the planned Android client all talk to
+        the same endpoints. What the window adds is a native file dialog returning real
+        paths, so <strong>a video is indexed where it already lives</strong> rather than
+        being uploaded to the machine it is already on.
+      </p>
+      <p>
+        Importing never blocks the app. Motion segmentation finishes early and its moments
+        are searchable immediately, so search goes live while analysis is still running &mdash;
+        verified typing at 15% through an import. Progress is measured in seconds of
+        footage examined rather than files or segments, because a long recording often
+        yields two segments and a bar that moves twice in four minutes is indistinguishable
+        from a hung one.
+      </p>
+      <p>
+        One reversal worth recording. The library has no default similarity floor, because
+        absolute CLIP scores are not calibrated and a caller that can see them should
+        choose its own. The <em>app</em> applies one anyway: its whole promise is an answer
+        or an honest nothing, and returning the closest three frames for "a snowy mountain"
+        reads as broken. The number lives in config, is shown as a percentage on every
+        result, and is one line to change.
+      </p>
+    </section>
+
+    <section id="phases">
+      <p class="kicker">Sequence</p>
+      <h2>Where it stands</h2>
+
+      <div class="phases">
+        <div class="phase phase--done">
+          <span class="num">0</span>
+          <div>
+            <h3>Motion segmentation and timeline</h3>
+            <p>Two-tier segmentation, scrubable timeline, no models. Useful before any AI exists: a day becomes the part worth watching.</p>
+          </div>
+          <span class="status">Shipped</span>
+        </div>
+        <div class="phase phase--done">
+          <span class="num">1</span>
+          <div>
+            <h3>Detection, tracking, object index</h3>
+            <p>YOLO11n and ByteTrack over segments, with per-model backend selection. Segments gain labels.</p>
+          </div>
+          <span class="status">Shipped</span>
+        </div>
+        <div class="phase phase--done">
+          <span class="num">2</span>
+          <div>
+            <h3>Zones and identity</h3>
+            <p>Door lines and rooms drawn on a real frame; faces enrolled once name the same person elsewhere. Crossings carry a direction and a timestamp.</p>
+          </div>
+          <span class="status">Shipped</span>
+        </div>
+        <div class="phase phase--done">
+          <span class="num">3</span>
+          <div>
+            <h3>Search by text</h3>
+            <p>CLIP over frames and crops, a word index, structured filters, fused by rank rather than by score.</p>
+          </div>
+          <span class="status">Shipped</span>
+        </div>
+        <div class="phase">
+          <span class="num">4</span>
+          <div>
+            <h3>Answers and captions</h3>
+            <p>Grounded question answering returns timestamps. Florence-2 captioning describes what each person is doing, which is what makes <em>red bag</em> or <em>medicine bottle</em> searchable words.</p>
+          </div>
+          <span class="status">Shipped</span>
+        </div>
+        <div class="phase phase--done">
+          <span class="num">5</span>
+          <div>
+            <h3>Speech</h3>
+            <p>Whisper via CTranslate2, gated by voice activity detection and filtered on the model's own confidence. Speech joins the same index, so a name nobody enrolled is still searchable.</p>
+          </div>
+          <span class="status">Shipped</span>
+        </div>
+      </div>
+    </section>
+
+    <section id="uncalibrated">
+      <p class="kicker">Open</p>
+      <h2>What is not calibrated</h2>
+      <p>
+        Every threshold is a guess. Synthetic clips prove correctness, not calibration, and
+        the difference matters. In rough order of how likely each is to bite:
+      </p>
+
+      <ul class="risks">
+        <li>
+          <strong>Night and IR scenes.</strong> A dark subject on a dark IR background
+          scored roughly <em>ten times lower</em> than the same subject in daylight &mdash;
+          close enough to the segment-open threshold to matter.
+        </li>
+        <li>
+          <strong>Noisy cameras weaken Tier A.</strong> The packet signal is relative, so
+          sensor noise shrinks it. On a deliberately noisy clip the gap between idle and
+          active fell to about three sigma with the two populations touching &mdash; no
+          threshold could have separated them.
+        </li>
+        <li>
+          <strong>Identity thresholds.</strong> Separation on clean frontal faces is
+          enormous, 0.998 against 0.034. CCTV faces are small, angled and often IR-lit, and
+          that margin will shrink.
+        </li>
+        <li>
+          <strong>Search relevance.</strong> A matching query scored 0.22&ndash;0.27 and an
+          unrelated one 0.15, but that gap moves with the camera and the phrasing. "A
+          helicopter landing" still scores 0.22 against a person walking.
+        </li>
+        <li>
+          <strong>Recording timestamps.</strong> Filenames are read before container
+          metadata, because NVRs rewrite <code>creation_time</code> on export. Where
+          neither exists the fallback is file mtime, recorded per video so it can be
+          distrusted.
+        </li>
+        <li>
+          <strong>Question phrasing.</strong> The direction phrases are a list, not an
+          understanding of English.
+        </li>
+      </ul>
+
+      <div class="closer">
+        <p>
+          The gating item has not changed since the first day of this work: real footage.
+          A few days of actual recordings including night, IR and some weather. Every
+          number above was measured on synthetic clips or on a single phone video, and the
+          first honest calibration pass needs cameras pointed at a real place.
+        </p>
+      </div>
+    </section>
+
+  </main>
+</div>
+</body>
+</html>
