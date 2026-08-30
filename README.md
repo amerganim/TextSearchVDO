@@ -211,6 +211,44 @@ was and — as important — where nothing was recorded at all, filters for
 browsing by camera, day and object class, and a readout of what the question
 parser actually grounded. It has a way back to the app.
 
+## Using it from a phone
+
+```bash
+.venv/Scripts/python -m tsv share
+```
+
+Prints the address to open and a six-digit pairing code. On the phone, join
+the same WiFi — or plug it in and turn on USB tethering — open the address,
+enter the code. Pairing lasts 30 days and survives restarts.
+
+**No Android app is needed, and one would not have helped.** The page is
+already responsive, already streams video by HTTP range request, and already
+uploads through a file picker. It carries a web app manifest, so *Add to Home
+Screen* gives it its own icon and a full-screen launch — on iOS as well as
+Android, which a native Android app would not have covered. One codebase, no
+store review.
+
+`python -m tsv devices` lists what has been paired; `--revoke <id>` removes
+one, and it is refused on its very next request.
+
+### What sharing does and does not protect
+
+Sharing is **off by default** and is a constructor argument rather than a
+runtime toggle — whether strangers can read your footage is not the sort of
+thing that should be flippable by a request.
+
+With it on, a device that has not paired gets the pairing page and nothing
+else: not the index, not a thumbnail, not the application's own JavaScript.
+Loopback is exempt, because somebody sitting at the machine can open the
+database in a text editor and a login would protect nothing.
+
+What it does **not** do is encrypt. There is no TLS, because the alternative
+is asking people to trust a self-signed certificate on a phone, which is
+unpleasant enough that most would give up. Somebody already on your WiFi,
+running the right tools, can see the traffic. **Your network is the security
+boundary** — which is why `tsv share` refuses to start when it cannot find a
+private address, and warns loudly if the machine has a public one.
+
 ## Architecture
 
 **[How it works, step by step, with diagrams](docs/HOW-IT-WORKS.md)** — the

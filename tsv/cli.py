@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import sys
 from pathlib import Path
 
 from tsv import db
@@ -675,6 +676,111 @@ def cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_qr(url: str) -> None:
+    """A QR in the terminal, if the console can render one.
+
+    Windows consoles still default to cp1252, and segno draws with block
+    characters - printing them there raises UnicodeEncodeError and takes the
+    whole command down with it. The URL is the thing that matters; the QR is
+    a convenience, so it is allowed to fail quietly.
+    """
+    try:
+        import io
+
+        import segno
+
+        buffer = io.StringIO()
+        segno.make(url, error="m").terminal(buffer, compact=True)
+        drawing = buffer.getvalue()
+        drawing.encode(sys.stdout.encoding or "utf-8")
+    except Exception:      # noqa: BLE001 - no QR is not a failure
+        return
+    print(drawing)
+
+
+def cmd_share(args: argparse.Namespace) -> int:
+    """Serve on the local network so a phone can reach this."""
+    import uvicorn
+
+    from tsv.api import create_app
+    from tsv.share import describe_addresses, local_addresses
+
+    cfg = _config(args)
+    addresses = local_addresses()
+    offer, warnings = describe_addresses(addresses)
+
+    for warning in warnings:
+        print(f"  ! {warning}")
+    if not offer and not args.force:
+        print()
+        print("Nothing safe to share on. Pass --force to bind anyway.")
+        return 1
+
+    app = create_app(cfg, share=True)
+    # The middleware owns the code, so the console reads it from there rather
+    # than holding a second copy that could drift out of step.
+    code = app.state.pairing_code() if hasattr(app.state, "pairing_code") else None
+
+    port = args.port
+    primary = offer[0].ip if offer else "127.0.0.1"
+    url = f"http://{primary}:{port}/pair"
+
+    print()
+    print("  Sharing on your local network. Leave this running.")
+    print()
+    for address in offer:
+        print(f"    http://{address.ip}:{port}/pair    ({address.hint})")
+    if not offer:
+        print(f"    http://{primary}:{port}/pair")
+    print()
+    if code:
+        print(f"    pairing code:  {code[:3]} {code[3:]}")
+        print()
+    print("  On the phone: join the same WiFi, or plug it in and turn on USB")
+    print("  tethering, then open the address above and enter the code.")
+    print()
+    _print_qr(url)
+    print("  Ctrl+C to stop sharing.")
+    print()
+    # The address and the code are the whole point of this command, and
+    # uvicorn is about to take the thread. Flush so they are on screen
+    # even when the output is piped somewhere that buffers.
+    sys.stdout.flush()
+
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
+    return 0
+
+
+def cmd_devices(args: argparse.Namespace) -> int:
+    """List the phones that have been paired, or remove one."""
+    from datetime import datetime as _dt
+
+    from tsv.share import list_devices, revoke_device
+
+    cfg = _config(args)
+    conn = db.open_db(cfg.db_path)
+
+    if args.revoke is not None:
+        if revoke_device(conn, args.revoke):
+            print(f"device {args.revoke} revoked; it will be refused immediately.")
+            return 0
+        print(f"no device with id {args.revoke}")
+        return 1
+
+    devices = list_devices(conn)
+    if not devices:
+        print("No phones paired. Run `tsv share` and pair one.")
+        return 0
+
+    for device in devices:
+        seen = _dt.fromtimestamp(device["last_seen"] or device["paired_at"])
+        print(f'  [{device["id"]}] {device["name"][:24]:<24} '
+              f'last seen {seen:%Y-%m-%d %H:%M}  from {device["address"]}')
+    print()
+    print("Remove one with:  python -m tsv devices --revoke <id>")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="tsv", description=__doc__)
     parser.add_argument("--data-dir", default=str(DEFAULT.data_dir))
@@ -803,6 +909,19 @@ def main(argv: list[str] | None = None) -> int:
 
     p_app = sub.add_parser("app", help="open the desktop window")
     p_app.set_defaults(func=cmd_app)
+
+    p_share = sub.add_parser(
+        "share", help="serve on the local network so a phone can use it"
+    )
+    p_share.add_argument("--port", type=int, default=8000)
+    p_share.add_argument("--force", action="store_true",
+                         help="bind even with no private network address")
+    p_share.set_defaults(func=cmd_share)
+
+    p_devices = sub.add_parser("devices", help="phones that have been paired")
+    p_devices.add_argument("--revoke", type=int, metavar="ID",
+                           help="remove a phone's access immediately")
+    p_devices.set_defaults(func=cmd_devices)
 
     p_serve = sub.add_parser("serve", help="run the web UI without a window")
     p_serve.add_argument("--host", default="127.0.0.1")

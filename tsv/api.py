@@ -7,13 +7,16 @@ these same endpoints rather than a second implementation.
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 import sqlite3
 from datetime import date, datetime, time as dtime, timedelta
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi.responses import (
+    FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response,
+)
 from pydantic import BaseModel, Field
 
 from tsv import db
@@ -24,6 +27,10 @@ from tsv.identity import (
     unname_tracklet,
 )
 from tsv.jobs import JobRunner
+from tsv.share import (
+    COOKIE_DAYS, COOKIE_NAME, Pairing, is_public_path, issue_cookie, list_devices,
+    load_key, register_device, revoke_device, verify_cookie,
+)
 from tsv.query import ask as run_ask
 from tsv.search import SearchFilters, rebuild_text_index, search as run_search
 from tsv.setup import missing_summary
@@ -87,12 +94,56 @@ def _spread(
             buckets[i] = max(buckets[i], value)
 
 
-def create_app(cfg: Config = DEFAULT) -> FastAPI:
+def create_app(cfg: Config = DEFAULT, share: bool = False) -> FastAPI:
+    """The app. `share` decides whether anything but this machine may reach it.
+
+    Off by default, and deliberately a constructor argument rather than a
+    runtime toggle: whether strangers can read the index is not the sort of
+    thing that should be flippable by a request.
+    """
     app = FastAPI(title="TextSearchVDO", version="0.1.0")
     # One handle per worker thread; see db.ThreadLocalConnection.
     conn = db.open_threadlocal(cfg.db_path)
 
     jobs = JobRunner()
+    share_key = load_key(cfg.data_dir) if share else b""
+    pairing = Pairing() if share else None
+    if pairing is not None:
+        # The console prints the code, and it must be the same object the
+        # middleware checks against - a second copy would drift the moment
+        # the code rotated after a bad guess.
+        app.state.pairing_code = lambda: pairing.code
+
+    @app.middleware("http")
+    async def require_pairing(request, call_next):
+        """Nothing but the pairing page, until a phone has been let in.
+
+        Loopback is exempt: a request from this machine is somebody who could
+        open the database in a text editor anyway, and making the desktop
+        window log in to itself would protect nothing.
+        """
+        if not share:
+            return await call_next(request)
+
+        client = request.client.host if request.client else ""
+        if client in ("127.0.0.1", "::1", "localhost"):
+            return await call_next(request)
+
+        if is_public_path(request.url.path):
+            return await call_next(request)
+
+        device_id = verify_cookie(conn, share_key, request.cookies.get(COOKIE_NAME))
+        if device_id is None:
+            # A page gets sent to pair; an API call gets a 401, so a phone
+            # whose cookie expired mid-search sees an error rather than the
+            # pairing form rendered inside a results list.
+            if request.url.path.startswith("/api/"):
+                return Response(
+                    '{"detail":"not paired"}', status_code=401,
+                    media_type="application/json",
+                )
+            return RedirectResponse("/pair", status_code=303)
+        return await call_next(request)
 
     # The text encoder is loaded once, lazily: it is only needed when someone
     # actually types something, and loading it costs a second or two.
@@ -113,6 +164,73 @@ def create_app(cfg: Config = DEFAULT) -> FastAPI:
 
     def _camera_filter(camera_id: int | None) -> tuple[str, list]:
         return ("AND camera_id = ?", [camera_id]) if camera_id else ("", [])
+
+    @app.get("/pair", response_class=HTMLResponse)
+    def pair_page() -> HTMLResponse:
+        """The only thing an unpaired phone can see."""
+        return HTMLResponse((WEB_DIR / "pair.html").read_text(encoding="utf-8"))
+
+    @app.post("/api/pair")
+    async def pair(request: Request) -> Response:
+        if not share or pairing is None:
+            raise HTTPException(404, "sharing is not on")
+
+        body = await request.json()
+        client = request.client.host if request.client else "unknown"
+        if not pairing.check(str(body.get("code", ""))):
+            # Deliberately vague, and slow enough to be worth nobody's time.
+            await asyncio.sleep(1.0)
+            raise HTTPException(403, "That code is not right.")
+
+        device_id = register_device(
+            conn,
+            name=str(body.get("name", "")),
+            user_agent=request.headers.get("user-agent", ""),
+            address=client,
+        )
+        response = JSONResponse({"paired": True, "device_id": device_id})
+        response.set_cookie(
+            COOKIE_NAME,
+            issue_cookie(share_key, device_id),
+            max_age=COOKIE_DAYS * 86400,
+            httponly=True,
+            samesite="lax",
+        )
+        return response
+
+    @app.get("/api/devices")
+    def devices() -> list[dict]:
+        return list_devices(conn)
+
+    @app.delete("/api/devices/{device_id}")
+    def remove_device(device_id: int) -> dict:
+        if not revoke_device(conn, device_id):
+            raise HTTPException(404, "no such device")
+        return {"revoked": device_id}
+
+    @app.get("/manifest.json")
+    def manifest() -> Response:
+        """Enough for a phone to install this to its home screen.
+
+        Which is the answer to "do we need an Android app": no. The page is
+        already responsive and already streams video by range request, and
+        this makes it launch full-screen with its own icon - on iOS too,
+        where a native Android app would not have helped.
+        """
+        return JSONResponse({
+            "name": "TextSearchVDO",
+            "short_name": "TextSearch",
+            "start_url": "/",
+            "display": "standalone",
+            "background_color": "#0f1218",
+            "theme_color": "#0f1218",
+            "icons": [{
+                "src": "/static/icon.svg",
+                "sizes": "any",
+                "type": "image/svg+xml",
+                "purpose": "any maskable",
+            }],
+        })
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> HTMLResponse:

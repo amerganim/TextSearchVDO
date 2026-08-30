@@ -11,7 +11,7 @@ import sqlite3
 import threading
 from pathlib import Path
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_info (
@@ -83,6 +83,18 @@ CREATE TABLE IF NOT EXISTS tracklets (
     -- Normalised union of every box in the tracklet.
     x1          REAL, y1 REAL, x2 REAL, y2 REAL,
     thumb_path  TEXT
+);
+
+-- Phones that have been let in. A cookie names a row here, so revoking is a
+-- DELETE and takes effect on the very next request rather than whenever a
+-- token would have expired.
+CREATE TABLE IF NOT EXISTS devices (
+    id          INTEGER PRIMARY KEY,
+    name        TEXT NOT NULL,
+    user_agent  TEXT,
+    address     TEXT,
+    paired_at   REAL NOT NULL,
+    last_seen   REAL
 );
 
 -- What was said, and when. Separate from segments because speech does not

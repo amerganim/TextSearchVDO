@@ -659,8 +659,31 @@ body.dragging .welcome { outline: 2px dashed var(--accent); outline-offset: 14px
 .player-box video { width: 100%; max-height: 74vh; display: block; background: #000; }
 
 @media (max-width: 640px) {
-  header { flex-wrap: wrap; }
-  .library { order: 3; width: 100%; margin: 4px 0 0; }
+  header { flex-wrap: wrap; row-gap: 8px; }
+  .brand { flex: 1 0 auto; }
+  .library { order: 3; width: 100%; margin: 0; }
+
+  /* Six controls will not fit across a phone. Wrapping them made "People
+     (22 to name)" three lines tall and still pushed Advanced off the edge,
+     so they get their own row that scrolls sideways instead - the pattern
+     every phone user already knows from a tab bar. */
+  .actions {
+    order: 2;
+    width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+  }
+
+  .actions::-webkit-scrollbar { display: none; }
+
+  .actions button,
+  .actions a {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
   .welcome h1 { font-size: 24px; }
 }
 

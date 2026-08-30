@@ -13,6 +13,9 @@ openvino>=2026.3
 # affordable here: the runtime stays ONNX Runtime, numpy and this.
 faster-whisper>=1.2
 
+# QR code for phone pairing. Pure Python, no dependencies of its own.
+segno>=1.6
+
 # Desktop window and browser uploads
 pywebview>=6.2
 python-multipart>=0.0.20

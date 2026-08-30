@@ -499,6 +499,60 @@ flowchart LR
 
 ---
 
+## Reaching it from a phone
+
+The app was always a server — the desktop window is a WebView pointed at it —
+so a phone needed no new architecture, only for the server to stop binding to
+loopback. Which is exactly what made it dangerous: there had never been any
+authentication, so binding to the LAN as the code stood would have published
+the footage, the enrolled names and every transcript to the whole network.
+
+```mermaid
+flowchart TD
+    P["Phone on the same WiFi<br/>or plugged in, USB tethering"]
+    P --> M{"Paired?"}
+    M -->|"no, and a page"| R["303 to /pair"]
+    M -->|"no, and an API call"| E["401"]
+    M -->|"loopback"| A
+    M -->|"yes, signed cookie"| A["The whole app"]
+    R --> C["Six-digit code<br/>shown on the PC"]
+    C -->|"correct"| K["Cookie naming a row in devices"]
+    K --> A
+    A --> S["Search, captions, transcripts"]
+    A --> V["Playback by HTTP range<br/>206 Partial Content"]
+```
+
+Three decisions worth naming:
+
+**The allow-list is closed, not a prefix.** The obvious implementation lets
+anything under `/static/` through so the pairing page can style itself — and
+hands `simple.js`, and with it a map of the whole application, to a device
+that has proved nothing. `pair.css` is listed by name.
+
+**The cookie names a database row rather than carrying its own claim.** A
+self-contained token stays valid until it expires, so "revoke" would mean "in
+thirty days". Naming a row means revoking is a `DELETE` and takes effect on
+the very next request.
+
+**A code is good for one device.** It rotates on success, and after five
+failures. Six digits is a million, which is nothing against an offline attack
+and plenty against an online one — provided guessing never gets a fixed
+target.
+
+There is no TLS, and that is a stated trade rather than an oversight: your
+network is the security boundary. `tsv share` refuses to bind when it cannot
+find a private address, and names what each address probably is — Android
+tethering hands the PC `192.168.42.x`, iOS `172.20.10.x` — because *which of
+these is the cable* is exactly the question somebody has at that moment.
+
+### Why there is no Android app
+
+The page is responsive, streams video by range request, and uploads through a
+file picker. A web app manifest makes *Add to Home Screen* give it an icon and
+a full-screen launch — including on iOS, which a native Android app would not
+have covered at all. One codebase, no store review, and the same endpoints the
+desktop window uses.
+
 ## What gets stored
 
 SQLite, schema version 5. One file, no server.
