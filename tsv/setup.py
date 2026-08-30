@@ -23,6 +23,8 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from tsv import proc
 from typing import Callable
 
 from tsv.config import Config
@@ -163,7 +165,7 @@ def status(cfg: Config, detector: str | None = None) -> list[tuple[Component, bo
 
 def _run(command: list[str], label: str) -> tuple[bool, str]:
     try:
-        result = subprocess.run(
+        result = proc.run(
             command, capture_output=True, text=True, timeout=3600, check=False
         )
     except subprocess.TimeoutExpired:

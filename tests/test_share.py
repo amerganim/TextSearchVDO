@@ -432,3 +432,50 @@ def test_the_firewall_hint_is_offered_as_a_hint():
     doc = inspect.getdoc(share.firewall_allows) or ""
     assert "hint" in doc.lower()
     assert "not a verdict" in doc.lower()
+
+
+# ---------- getting back into the app ----------
+
+def test_a_paired_phone_is_sent_on_rather_than_asked_again(shared):
+    """Back, after watching a clip, used to strand a phone.
+
+    The pairing page is the history entry before the app, so Back from the
+    app landed on it - and it offered a pairing form to a device that had
+    already paired. The code shown when they first paired had been consumed,
+    a fresh one was not on screen anywhere, and nothing on the page led
+    forward. The only way out was to close the browser.
+    """
+    app, client = shared
+    code = app.state.pairing_code()
+    assert client.post("/api/pair", json={"code": code}).status_code == 200
+
+    landed = client.get("/pair")
+    assert landed.status_code == 303
+    assert landed.headers["location"] == "/"
+
+
+def test_an_unpaired_phone_still_gets_the_form(shared):
+    """The redirect must not lock out the device that actually needs it."""
+    _, client = shared
+    page = client.get("/pair")
+    assert page.status_code == 200
+    assert "code" in page.text.lower()
+
+
+def test_a_revoked_phone_is_asked_again(tmp_path):
+    """Revoking has to send the phone back to the form, not loop it into an
+    app it can no longer read."""
+    cfg = dataclasses.replace(DEFAULT, data_dir=tmp_path)
+    db.open_db(cfg.db_path).close()
+    app = create_app(cfg, share=True)
+    client = TestClient(app, follow_redirects=False)
+
+    client.post("/api/pair", json={"code": app.state.pairing_code()})
+    assert client.get("/pair").status_code == 303
+
+    conn = db.open_db(cfg.db_path)
+    for device in list_devices(conn):
+        revoke_device(conn, device["id"])
+    conn.close()
+
+    assert client.get("/pair").status_code == 200

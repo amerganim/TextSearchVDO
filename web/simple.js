@@ -552,6 +552,13 @@ function clipUrl(videoId, t, asH264) {
 
 function openPlayer(videoId, t, caption) {
   const video = $("video");
+  // A phone's Back button is the natural way to leave a video, and without a
+  // history entry to consume it leaves the page entirely - landing on the
+  // pairing screen, which is the entry before the app. One state pushed here
+  // makes Back close the player, which is what it looks like it should do.
+  if (!history.state || history.state.player !== true) {
+    history.pushState({ player: true }, "");
+  }
   $("player-caption").textContent = caption || "";
   $("player-backdrop").hidden = false;
   $("player-whole").hidden = false;
@@ -614,7 +621,13 @@ function openWholeRecording() {
   }, { once: true });
 }
 
-function closePlayer() {
+function closePlayer(fromHistory = false) {
+  // Unwind the entry openPlayer pushed, unless Back is what called this -
+  // going back again there would leave the page, which is the bug this
+  // exists to prevent.
+  if (!fromHistory && history.state && history.state.player === true) {
+    history.back();
+  }
   $("player-backdrop").hidden = true;
   const video = $("video");
   video.pause();
@@ -685,7 +698,10 @@ async function boot() {
   initVideos();
   initShare();
 
-  $("player-close").onclick = closePlayer;
+  // Wrapped, not passed directly: closePlayer takes a flag now, and a
+  // handler assigned bare would hand it the click event - which is
+  // truthy, so the X would quietly stop unwinding the history entry.
+  $("player-close").onclick = () => closePlayer();
   $("player-whole").onclick = openWholeRecording;
 
   state.canPlayHevc = canPlayHevc();
@@ -702,6 +718,10 @@ async function boot() {
   };
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") closePlayer();
+  });
+
+  window.addEventListener("popstate", () => {
+    if (!$("player-backdrop").hidden) closePlayer(true);
   });
 
   // Dragging works in a browser. The desktop window has no drop support at

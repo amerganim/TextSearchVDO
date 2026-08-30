@@ -27,6 +27,8 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from tsv import proc
+
 # Below this there is no point offering the larger tiers: the models fit, but
 # decoding video alongside them does not, and the machine swaps instead of
 # working. Measured against the tier table in catalogue.py rather than guessed.
@@ -173,7 +175,7 @@ def total_ram_mb() -> int:
                 os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE") // (1024 * 1024)
             )
         if sys.platform == "darwin":
-            out = subprocess.run(
+            out = proc.run(
                 ["sysctl", "-n", "hw.memsize"],
                 capture_output=True, text=True, timeout=5, check=False,
             )
@@ -191,7 +193,7 @@ def _nvidia_adapters() -> list[tuple[str, int]]:
     nvidia-smi ships with the driver, so its absence is itself the answer.
     """
     try:
-        out = subprocess.run(
+        out = proc.run(
             ["nvidia-smi", "--query-gpu=name,memory.total",
              "--format=csv,noheader,nounits"],
             capture_output=True, text=True, timeout=10, check=False,

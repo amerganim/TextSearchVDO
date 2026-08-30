@@ -37,6 +37,7 @@ import socket
 import sqlite3
 import subprocess
 import sys
+from tsv import proc
 import time
 from dataclasses import dataclass
 from hashlib import blake2b, sha256
@@ -138,7 +139,7 @@ def network_category() -> str:
     if sys.platform != "win32":
         return ""
     try:
-        result = subprocess.run(
+        result = proc.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command",
              "(Get-NetConnectionProfile | Select-Object -First 1"
              " -ExpandProperty NetworkCategory)"],
@@ -188,7 +189,7 @@ def firewall_allows(port: int) -> bool | None:
         "if ($m) {{ Write-Output yes }} else {{ Write-Output no }}"
     ).format(port=port)
     try:
-        result = subprocess.run(
+        result = proc.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
             capture_output=True, text=True, timeout=25, check=False,
         )

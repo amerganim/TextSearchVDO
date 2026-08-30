@@ -174,8 +174,18 @@ def create_app(cfg: Config = DEFAULT, share: bool = False) -> FastAPI:
         return ("AND camera_id = ?", [camera_id]) if camera_id else ("", [])
 
     @app.get("/pair", response_class=HTMLResponse)
-    def pair_page() -> HTMLResponse:
-        """The only thing an unpaired phone can see."""
+    def pair_page(request: Request) -> Response:
+        """The only thing an unpaired phone can see.
+
+        A phone that *is* paired is sent on to the app instead. Without this,
+        pressing Back after watching a clip landed on this page - it is the
+        entry in history before the app - and offered a pairing form to a
+        device that had already paired. Every code typed there was refused,
+        because the one that worked was consumed on the way in, and there was
+        no way forward from it at all.
+        """
+        if share and verify_cookie(conn, share_key, request.cookies.get(COOKIE_NAME)):
+            return RedirectResponse("/", status_code=303)
         return HTMLResponse((WEB_DIR / "pair.html").read_text(encoding="utf-8"))
 
     @app.post("/api/pair")

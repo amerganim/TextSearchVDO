@@ -12,6 +12,7 @@ already lives instead of being uploaded to the machine it is already on.
 from __future__ import annotations
 
 import socket
+import sys
 import threading
 import time
 from pathlib import Path
@@ -50,6 +51,33 @@ SPLASH = """
   <div class="what">Starting&hellip;</div>
 </div>
 """
+
+
+# The window's own icon. Without it the Windows backend falls back to reading
+# one out of sys.executable - which is pythonw.exe, so the app wore the Python
+# logo in its title bar, its taskbar button and its Alt-Tab card. The .ico is
+# beside this package rather than inside data/, because it is part of the
+# application, not of anyone's index.
+ICON = Path(__file__).resolve().parent.parent / "TextSearchVDO.ico"
+
+
+def _own_the_taskbar_button(app_id: str = "TextSearchVDO.App") -> None:
+    """Stop Windows filing this window under Python.
+
+    Separate from the icon and needed as well as it. The taskbar groups by
+    Application User Model ID, and a process that never sets one inherits the
+    host executable's - so the button stayed Python's even once the title bar
+    was right. Best-effort: on any other platform, and on a Windows where this
+    call is unavailable, the app simply looks the way it did before.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
+    except Exception:  # noqa: BLE001 - cosmetic; never worth failing to start
+        pass
 
 
 def _free_port() -> int:
@@ -117,6 +145,7 @@ def run(cfg, title: str = "TextSearchVDO", width: int = 1180, height: int = 800)
 
     from tsv.api import create_app
 
+    _own_the_taskbar_button()
     port = _free_port()
     # Sharing capability on, listening on loopback only. The middleware
     # exempts this machine, so the window is unaffected; turning sharing on
@@ -153,6 +182,10 @@ def run(cfg, title: str = "TextSearchVDO", width: int = 1180, height: int = 800)
                 )
             )
 
-    webview.start(open_when_ready)
+    # icon= is documented as GTK/QT only, but the Windows backend reads it too
+    # and only falls back to sys.executable when it is unset - which is what
+    # produced the Python logo. Passed as a str because that fallback is
+    # guarded by os.path.isfile, and a missing file lands back on pythonw.exe.
+    webview.start(open_when_ready, icon=str(ICON) if ICON.is_file() else None)
     server.should_exit = True
     return 0

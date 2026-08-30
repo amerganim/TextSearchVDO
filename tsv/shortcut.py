@@ -19,6 +19,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from tsv import proc
+
 SCRIPT = """
 $ws = New-Object -ComObject WScript.Shell
 $s = $ws.CreateShortcut('{link}')
@@ -59,7 +61,7 @@ def create(
     )
 
     try:
-        result = subprocess.run(
+        result = proc.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
             capture_output=True, text=True, timeout=30, check=False,
         )
