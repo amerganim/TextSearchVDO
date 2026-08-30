@@ -57,6 +57,12 @@ class ImportResult:
     faces: int = 0
     captions: int = 0
     utterances: int = 0
+    # Why nothing was heard, when nothing was. Reporting only the count meant
+    # a video with no microphone, a silent room and speech the model could not
+    # follow all produced the same thing on screen: no message at all.
+    no_audio: int = 0
+    silent: int = 0
+    unclear: int = 0
     skipped: int = 0
     # Files that turned out to be a copy of something already indexed. Counted
     # apart from `skipped`, which means "unchanged since last time": one is
@@ -64,6 +70,14 @@ class ImportResult:
     # asked for a video and got no new library entry.
     duplicates: list[str] | None = None
     failed: list[str] | None = None
+
+    @property
+    def listened(self) -> bool:
+        """Whether the speech pass ran at all, which is the first thing a
+        reader needs before any of the counts above mean anything."""
+        return bool(
+            self.utterances or self.no_audio or self.silent or self.unclear
+        )
 
     @property
     def reduction(self) -> float:
@@ -80,6 +94,10 @@ class ImportResult:
             "faces": self.faces,
             "captions": self.captions,
             "utterances": self.utterances,
+            "no_audio": self.no_audio,
+            "silent": self.silent,
+            "unclear": self.unclear,
+            "listened": self.listened,
             "skipped": self.skipped,
             "duplicates": self.duplicates or [],
             "failed": self.failed or [],
@@ -246,6 +264,9 @@ def import_videos(
         try:
             heard = transcribe_videos(conn, cfg, force=force, on_progress=on_listen)
             result.utterances = heard.utterances
+            result.no_audio = heard.skipped_no_audio
+            result.silent = heard.skipped_silent
+            result.unclear = heard.skipped_unclear
             result.failed.extend(heard.failed)
         except Exception as exc:  # noqa: BLE001 - a missing model is not a failed import
             result.failed.append(f"transcription skipped: {type(exc).__name__}: {exc}")

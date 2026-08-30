@@ -28,6 +28,9 @@ MODELS: dict[str, tuple[str, int]] = {
     "tiny": ("Systran/faster-whisper-tiny", 75),
     "base": ("Systran/faster-whisper-base", 145),
     "small": ("Systran/faster-whisper-small", 484),
+    # For languages base cannot hold. Measured here on Bengali, where
+    # base transliterates and small fails outright - see tsv/catalogue.py.
+    "medium": ("Systran/faster-whisper-medium", 1530),
 }
 
 # What ctranslate2 needs on disk. Fetching only these avoids pulling the

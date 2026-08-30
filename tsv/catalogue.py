@@ -333,6 +333,22 @@ _AUDIO = (
         tier=1,
     ),
     ModelChoice(
+        key="whisper-medium",
+        stage="audio",
+        title="Whisper medium",
+        quality=(
+            "the usual answer for a language base cannot hold, and measured here "
+            "it is not: on Bengali it kept nothing across three runs, gave two "
+            "different answers to the same file, and ran at 0.18x realtime - "
+            "190s for a 35s clip, against base's 2s."
+        ),
+        licence="MIT",
+        shippable=True,
+        approx_mb=1530,
+        min_ram_mb=16384,
+        tier=3,
+    ),
+    ModelChoice(
         key="whisper-small",
         stage="audio",
         title="Whisper small",

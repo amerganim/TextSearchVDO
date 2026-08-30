@@ -300,12 +300,19 @@ function watchJob(jobId, kind) {
         const nothing = !bits.length && (r.duplicates || []).length;
         if (!nothing) notice(bits.join(" &middot; ") || "Ready.", "good");
       }
+      // Say what happened to the speech pass even - especially - when it
+      // found nothing. Reporting only success meant a video with no
+      // microphone, a silent room, and speech too unclear to trust all looked
+      // identical from here: no message at all, and no way to tell whether
+      // the feature had run, failed, or simply had nothing to do.
       if (r.utterances) {
         notice(
           `Heard ${r.utterances} line(s) of speech — now searchable by what `
           + "was said.",
           "good",
         );
+      } else if (r.listened) {
+        notice(speechNothing(r));
       }
       if ((r.failed || []).length) notice(r.failed.join("; "));
       refreshChrome(await refreshLibrary());
@@ -548,6 +555,23 @@ function canPlayHevc() {
 function clipUrl(videoId, t, asH264) {
   return `/api/clip/${videoId}?t=${encodeURIComponent(t)}`
     + `&seconds=${CLIP_SECONDS}${asH264 ? "&h264=1" : ""}`;
+}
+
+// Why the speech pass came back with nothing. Ordered by what the reader can
+// act on: unclear audio is the only one of the three with a remedy, so it is
+// said first and said plainly, rather than being averaged into "no speech".
+function speechNothing(r) {
+  const parts = [];
+  if (r.unclear) {
+    parts.push(
+      `${r.unclear} video(s) had speech that was too unclear to index `
+      + "— usually a language this model cannot follow, or a distant voice",
+    );
+  }
+  if (r.silent) parts.push(`${r.silent} had audio but no speech`);
+  if (r.no_audio) parts.push(`${r.no_audio} had no audio track`);
+  if (!parts.length) return "No speech found.";
+  return `No speech indexed: ${parts.join("; ")}.`;
 }
 
 function openPlayer(videoId, t, caption) {

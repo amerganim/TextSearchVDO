@@ -454,14 +454,27 @@ def cmd_listen(args: argparse.Namespace) -> int:
 
         model = load_model(cfg)
         started = _time.time()
-        found = transcribe_file(model, path, language=cfg.audio.language)
+        heard = transcribe_file(model, path, language=cfg.audio.language)
+        found = heard.utterances
         elapsed = _time.time() - started
         print(f"  {cfg.audio.model_dir} on {device}/{compute}, {elapsed:.1f}s")
+        if heard.language:
+            print(f"  language {heard.language} "
+                  f"(confidence {heard.language_probability:.2f})")
 
         if not found:
-            print("  nothing said, or nothing said clearly enough to keep.")
-            print("  silence is discarded deliberately: run over a silent track,")
-            print("  Whisper invents fluent text rather than returning nothing.")
+            if heard.unclear:
+                # The one silent result with a remedy, so it must not be
+                # reported as though nobody spoke.
+                print(f"  {heard.discarded} stretch(es) of speech were found and "
+                      "none was clear enough to keep.")
+                print("  usually a language this model cannot follow, or a voice "
+                      "too far from the microphone.")
+                print("  a larger model is the fix: see python -m tsv models")
+            else:
+                print("  nothing said, or nothing said clearly enough to keep.")
+                print("  silence is discarded deliberately: run over a silent track,")
+                print("  Whisper invents fluent text rather than returning nothing.")
             return 0
 
         for utterance in found:
@@ -469,6 +482,8 @@ def cmd_listen(args: argparse.Namespace) -> int:
         spoken = sum(u.t_end - u.t_start for u in found)
         print()
         print(f"  {len(found)} line(s), {spoken:.0f}s of speech")
+        if heard.discarded:
+            print(f"  {heard.discarded} more discarded as too unclear to trust")
         return 0
 
     conn = db.open_db(cfg.db_path)
@@ -485,6 +500,7 @@ def cmd_listen(args: argparse.Namespace) -> int:
     print(f"  speech        {summary.seconds_of_speech:.0f}s")
     print(f"  no audio      {summary.skipped_no_audio}")
     print(f"  silent        {summary.skipped_silent}")
+    print(f"  too unclear   {summary.skipped_unclear}")
     for line in summary.failed:
         print(f"  FAILED  {line}")
     for text in summary.samples:

@@ -86,12 +86,42 @@ class Utterance:
 
 
 @dataclass
+class Heard:
+    """What came back from one file, and enough to explain a silent result.
+
+    A bare list of utterances cannot distinguish the three ways of hearing
+    nothing, and they mean completely different things to somebody deciding
+    whether the feature is working: a recording with no microphone, a
+    recording where nobody spoke, and a recording full of speech that the
+    model could not hold well enough to be worth indexing. Reported as one
+    empty list, all three look like the app is broken.
+    """
+
+    utterances: list["Utterance"] = field(default_factory=list)
+    # Segments the confidence floor rejected. The difference between "nobody
+    # spoke" and "somebody spoke and this model cannot follow them", which for
+    # Bengali here is the difference between a wrong answer and a fixable one.
+    discarded: int = 0
+    language: str = ""
+    language_probability: float = 0.0
+
+    @property
+    def unclear(self) -> bool:
+        """Speech was there; none of it survived."""
+        return not self.utterances and self.discarded > 0
+
+
+@dataclass
 class TranscribeSummary:
     videos: int = 0
     utterances: int = 0
     seconds_of_speech: float = 0.0
     skipped_silent: int = 0
     skipped_no_audio: int = 0
+    # Had speech in it, and none of it was clear enough to keep. Separate from
+    # silent because the remedy is different: silence is nothing to fix, this
+    # is a model that cannot hold the language being spoken.
+    skipped_unclear: int = 0
     failed: list[str] = field(default_factory=list)
     elapsed: float = 0.0
     samples: list[str] = field(default_factory=list)
@@ -103,6 +133,7 @@ class TranscribeSummary:
             "seconds_of_speech": round(self.seconds_of_speech, 1),
             "skipped_silent": self.skipped_silent,
             "skipped_no_audio": self.skipped_no_audio,
+            "skipped_unclear": self.skipped_unclear,
             "failed": self.failed,
             "elapsed": round(self.elapsed, 1),
             "samples": self.samples[:5],
@@ -190,7 +221,7 @@ def transcribe_file(
     path: Path,
     language: str | None = None,
     on_progress: Callable[[float], None] | None = None,
-) -> list[Utterance]:
+) -> Heard:
     """Speech in one file, as timed utterances.
 
     Voice activity detection does the gating, so silence costs a fraction of
@@ -208,7 +239,11 @@ def transcribe_file(
     )
 
     duration = float(getattr(info, "duration", 0.0) or 0.0)
-    out: list[Utterance] = []
+    heard = Heard(
+        language=str(getattr(info, "language", "") or ""),
+        language_probability=float(getattr(info, "language_probability", 0.0) or 0.0),
+    )
+    out: list[Utterance] = heard.utterances
     for segment in segments:
         text = (segment.text or "").strip()
         if not text:
@@ -216,6 +251,9 @@ def transcribe_file(
         logprob = float(getattr(segment, "avg_logprob", 0.0) or 0.0)
         no_speech = float(getattr(segment, "no_speech_prob", 0.0) or 0.0)
         if logprob < MIN_LOGPROB or no_speech > MAX_NO_SPEECH:
+            # Counted rather than forgotten: this is the only evidence that
+            # speech was present at all when nothing survives.
+            heard.discarded += 1
             continue
         out.append(Utterance(
             t_start=float(segment.start), t_end=float(segment.end),
@@ -223,7 +261,7 @@ def transcribe_file(
         ))
         if on_progress and duration:
             on_progress(min(float(segment.end) / duration, 1.0))
-    return out
+    return heard
 
 
 def store_utterances(
@@ -320,7 +358,7 @@ def transcribe_videos(
             continue
 
         try:
-            utterances = transcribe_file(
+            heard = transcribe_file(
                 model, path, language=cfg.audio.language,
                 on_progress=(
                     lambda frac, i=index: on_progress(i, len(rows), frac)
@@ -331,6 +369,7 @@ def transcribe_videos(
             summary.failed.append(f"{path.name}: {type(exc).__name__}: {exc}")
             continue
 
+        utterances = heard.utterances
         store_utterances(conn, int(row["id"]), utterances)
         conn.execute(
             "UPDATE videos SET transcribed_at = ? WHERE id = ?",
@@ -341,7 +380,9 @@ def transcribe_videos(
         summary.videos += 1
         summary.utterances += len(utterances)
         summary.seconds_of_speech += sum(u.t_end - u.t_start for u in utterances)
-        if not utterances:
+        if heard.unclear:
+            summary.skipped_unclear += 1
+        elif not utterances:
             summary.skipped_silent += 1
         for utterance in utterances[:2]:
             if len(summary.samples) < 5:

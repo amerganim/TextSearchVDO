@@ -15,6 +15,7 @@ from datetime import date, datetime, time as dtime, timedelta
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
+from starlette.concurrency import run_in_threadpool
 from fastapi.responses import (
     FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response,
 )
@@ -844,7 +845,7 @@ def create_app(cfg: Config = DEFAULT, share: bool = False) -> FastAPI:
         temp = incoming / f".part-{safe}"
         with temp.open("wb") as out:
             while chunk := await file.read(1 << 20):
-                out.write(chunk)
+                await run_in_threadpool(out.write, chunk)
         from tsv.importer import stage_video
 
         return _start_import(stage_video(temp, incoming, name=safe), staged=True)
@@ -873,8 +874,10 @@ def create_app(cfg: Config = DEFAULT, share: bool = False) -> FastAPI:
 
         # Housekeeping here rather than on a timer: this is the only moment
         # the application knows somebody is thinking about uploads at all.
-        uploads.sweep(conn)
-        return uploads.begin(conn, cfg.data_dir, name, size).as_dict()
+        await run_in_threadpool(uploads.sweep, conn)
+        return (
+            await run_in_threadpool(uploads.begin, conn, cfg.data_dir, name, size)
+        ).as_dict()
 
     @app.get("/api/upload/{upload_id}")
     def upload_status(upload_id: int) -> dict:
@@ -907,7 +910,14 @@ def create_app(cfg: Config = DEFAULT, share: bool = False) -> FastAPI:
         if upload.received + len(data) > upload.size:
             raise HTTPException(400, "that chunk runs past the declared size")
 
-        return uploads.write_chunk(conn, upload, offset, data).as_dict()
+        # In a thread, because this endpoint is async and the write is not.
+        # A chunk is 8 MB, and writing it on the event loop stops every other
+        # request in the process for as long as the disk takes - so one phone
+        # uploading made everybody else's search hang, and several phones
+        # uploading made the app look broken to all of them.
+        return (
+            await run_in_threadpool(uploads.write_chunk, conn, upload, offset, data)
+        ).as_dict()
 
     @app.post("/api/upload/{upload_id}/finish")
     def upload_finish(upload_id: int) -> dict:

@@ -92,8 +92,11 @@ def test_low_confidence_lines_are_dropped():
         StubSegment(4, 6, "mostly silence", no_speech_prob=MAX_NO_SPEECH + 0.1),
         StubSegment(6, 8, "   "),
     ])
-    kept = transcribe_file(model, Path("a.mp4"))
-    assert [u.text for u in kept] == ["this one is fine"]
+    heard = transcribe_file(model, Path("a.mp4"))
+    assert [u.text for u in heard.utterances] == ["this one is fine"]
+    # The blank one is not a rejection, it is nothing at all.
+    assert heard.discarded == 2
+    assert not heard.unclear
 
 
 def test_the_hallucination_this_was_measured_against_is_rejected():
@@ -102,7 +105,12 @@ def test_the_hallucination_this_was_measured_against_is_rejected():
         StubSegment(480, 482, "Hey!", avg_logprob=-0.73, no_speech_prob=0.69),
         StubSegment(482, 484, "Hey!", avg_logprob=-0.73, no_speech_prob=0.69),
     ])
-    assert transcribe_file(model, Path("a.mp4")) == []
+    heard = transcribe_file(model, Path("a.mp4"))
+    assert heard.utterances == []
+    # And it is reported as unclear rather than as silence, because the two
+    # mean different things to somebody deciding whether this works.
+    assert heard.unclear
+    assert heard.discarded == 2
 
 
 # ---------- storage ----------
@@ -286,3 +294,44 @@ def test_a_transcript_in_another_script_does_not_kill_the_command(capsys):
 
     print("\u09b9\u09cd\u09af\u09be\u09b2\u09cb \u0995\u09c7\u09ae\u09a8 \u0986\u099b\u09c7\u09a8")
     assert "cp1252" not in capsys.readouterr().out
+
+
+# ---------- saying why nothing was heard ----------
+
+def test_silence_and_unclear_speech_are_told_apart():
+    """The whole point of the change. One empty list made a recording with no
+    microphone, a silent room, and speech the model cannot follow look
+    identical - and only the last of the three has a remedy."""
+    silent = transcribe_file(StubModel([]), Path("a.mp4"))
+    assert not silent.unclear
+    assert silent.discarded == 0
+
+    unclear = transcribe_file(
+        StubModel([StubSegment(0, 2, "aaaa", avg_logprob=-4.65)]), Path("a.mp4")
+    )
+    assert unclear.unclear
+    assert unclear.discarded == 1
+
+
+def test_speech_that_survives_is_not_called_unclear():
+    heard = transcribe_file(
+        StubModel([StubSegment(0, 2, "clear enough")]), Path("a.mp4")
+    )
+    assert not heard.unclear
+
+
+def test_the_detected_language_comes_back():
+    """A language guessed at 0.43 is itself the explanation for a bad
+    transcript, and it was being thrown away."""
+    heard = transcribe_file(StubModel([StubSegment(0, 2, "hello")]), Path("a.mp4"))
+    assert heard.language == "en"
+
+
+def test_a_run_separates_the_three_reasons(conn, monkeypatch):
+    """What the summary reports is what the user is shown, so the counts have
+    to survive the trip out of transcribe_videos."""
+    from tsv import audio as audio_module
+
+    summary = audio_module.TranscribeSummary()
+    assert "skipped_unclear" in summary.as_dict()
+    assert summary.as_dict()["skipped_unclear"] == 0
