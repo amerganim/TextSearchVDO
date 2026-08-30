@@ -329,3 +329,48 @@ def test_a_transfer_can_be_stopped_from_the_progress_strip():
     # Stopping keeps what arrived, and the wording has to say so or somebody
     # assumes the work is gone and starts again.
     assert "carry on from where it stopped" in js
+
+
+def test_tapping_a_result_fetches_a_clip_not_the_whole_recording():
+    """Measured: 0.68 MB against 124 MB, and 0.02 seconds to produce.
+
+    On a desktop the difference is invisible. On a phone over WiFi it is the
+    difference between watching something and waiting for it.
+    """
+    js = _js("simple.js")
+    assert "/api/clip/" in js, "the player still asks for the whole file"
+    assert "CLIP_SECONDS" in js
+    # And an escape hatch, because sometimes what happened next is the point.
+    assert "openWholeRecording" in js
+    assert 'id="player-whole"' in (WEB / "app.html").read_text(encoding="utf-8")
+
+
+def test_closing_the_player_stops_it_buffering():
+    """A clip left paused behind a closed dialog is somebody's data."""
+    js = _js("simple.js")
+    assert 'video.removeAttribute("src")' in js
+
+
+def test_the_phone_layout_puts_search_within_reach():
+    """Reaching the top of a six inch screen one-handed is the single most
+    awkward thing about the desktop layout on a phone."""
+    css = (WEB / "simple.css").read_text(encoding="utf-8")
+    phone = css[css.index("---------- on a phone ----------"):]
+    assert "position: fixed" in phone and "bottom: 0" in phone
+    # Under 16px, iOS zooms the page whenever the field is focused.
+    assert "font-size: 16px" in phone
+    assert "env(safe-area-inset-bottom)" in phone, "the home indicator will cover it"
+    assert "grid-template-columns: 1fr" in phone, "results are still a desktop grid"
+
+
+def test_sharing_can_be_turned_on_without_a_terminal():
+    """Asking somebody to open a command prompt on a computer that is not
+    theirs is where this feature stops being used."""
+    html = (WEB / "app.html").read_text(encoding="utf-8")
+    assert 'id="share-toggle"' in html and 'id="share-panel"' in html
+    assert 'id="share-qr-img"' in html, "nobody types an IP into a phone correctly"
+    js = _js("share.js")
+    assert "/api/share/start" in js and "/api/share/stop" in js
+    assert "initShare()" in _js("simple.js")
+    # Windows blocks the first bind, and its dialog opens behind the app.
+    assert "If Windows asks" in js

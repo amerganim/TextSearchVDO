@@ -762,3 +762,166 @@ body.dragging .welcome { outline: 2px dashed var(--accent); outline-offset: 14px
   .video-row { flex-wrap: wrap; }
   .video-actions { margin-left: 0; }
 }
+
+/* The player's controls: a clip by default, the whole recording on request. */
+.player-actions { display: flex; align-items: center; gap: 14px; }
+.player-actions .linkish { font-size: 12.5px; color: var(--muted); }
+.player-actions .linkish:hover { color: var(--accent); }
+
+/* ---------- on a phone ---------- */
+/*
+ * The layout above is a desktop one that happens to reflow. These are the
+ * changes that make it a phone application rather than a shrunk website:
+ * the search box within reach of a thumb, results as a single readable
+ * column, and touch targets that are actually hittable.
+ */
+
+@media (max-width: 760px) {
+  body {
+    /* Room for the search bar that now sits at the bottom, plus whatever the
+       phone's own home indicator takes. */
+    padding-bottom: calc(96px + env(safe-area-inset-bottom));
+  }
+
+  /* Anchored to the bottom, where the thumb already is. Reaching the top of
+     a six-inch screen one-handed is the single most awkward thing about the
+     desktop layout on a phone. */
+  .searchbar {
+    position: fixed;
+    left: 0; right: 0;
+    bottom: 0;
+    z-index: 12;
+    margin: 0;
+    max-width: none;
+    padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+    background: var(--panel);
+    border-top: 1px solid var(--line);
+    /* Above the results it scrolls over. */
+    box-shadow: 0 -8px 24px rgba(8, 10, 14, .45);
+  }
+
+  .searchbar input {
+    /* Under 16px and iOS zooms the whole page when this is focused. */
+    font-size: 16px;
+    padding: 12px 14px;
+  }
+
+  .searchbar button { padding: 12px 18px; }
+
+  /* One column, and big enough to see. A three-across grid of 110px
+     thumbnails is unreadable on a phone and unhittable with a thumb. */
+  .results {
+    grid-template-columns: 1fr;
+    gap: 12px;
+    margin-top: 12px;
+  }
+
+  .hit img { aspect-ratio: 16 / 10; }
+  .hit .when { font-size: 15px; }
+  .hit .said { -webkit-line-clamp: 4; font-size: 13px; }
+
+  .examples {
+    /* One scrolling row rather than four wrapped lines of chips. */
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    padding-bottom: 4px;
+  }
+
+  .examples::-webkit-scrollbar { display: none; }
+  .examples button { flex: 0 0 auto; padding: 7px 14px; }
+
+  /* Panels are full-bleed: side margins waste a quarter of the width. */
+  .panel { border-radius: 0; border-left: none; border-right: none; margin-top: 12px; }
+  .people-grid { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); }
+
+  /* The player fills the screen. A dialog with margins on a phone is just a
+     smaller video. */
+  .player-backdrop { padding: 0; }
+  .player-box { border-radius: 0; border: none; height: 100dvh; display: grid;
+                grid-template-rows: auto 1fr; align-content: center; }
+  .player-box video { max-height: none; height: 100%; object-fit: contain; }
+  .player-head { padding: calc(10px + env(safe-area-inset-top)) 14px 10px; }
+
+  /* Every tappable control clears the 44px Apple and Google both ask for. */
+  .video-actions .linkish,
+  .person .name-it,
+  .place-actions button { min-height: 44px; }
+}
+
+/* ---------- sharing with a phone ---------- */
+
+.share-grid {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.share-qr { text-align: center; }
+
+.share-qr img {
+  width: 168px;
+  height: 168px;
+  display: block;
+  padding: 10px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.share-qr .fine { margin: 8px 0 0; font-size: 12px; }
+
+.share-detail { display: grid; gap: 14px; }
+.share-urls { display: grid; gap: 6px; }
+
+.share-url {
+  display: grid;
+  gap: 1px;
+  padding: 8px 11px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.share-url b {
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 13.5px;
+  overflow-wrap: anywhere;
+}
+
+.share-url span { color: var(--muted); font-size: 12px; }
+
+/* Read off one screen and typed into another, so: large and well spaced. */
+.share-code {
+  font-size: 30px;
+  font-weight: 650;
+  letter-spacing: .18em;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+}
+
+.share-devices { display: grid; gap: 6px; }
+.share-devices .note { margin: 0; color: var(--dim); font-size: 13px; }
+
+.share-device {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 11px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.share-device .name { font-weight: 600; }
+.share-device .when { color: var(--muted); font-size: 12px; }
+.share-device .revoke { margin-left: auto; font-size: 12px; color: var(--muted); }
+.share-device .revoke:hover { color: var(--bad); }
+
+@media (max-width: 760px) {
+  .share-grid { grid-template-columns: minmax(0, 1fr); }
+  .share-qr img { margin: 0 auto; }
+}

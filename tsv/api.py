@@ -8,6 +8,7 @@ these same endpoints rather than a second implementation.
 from __future__ import annotations
 
 import asyncio
+import io
 import shutil
 import sqlite3
 from datetime import date, datetime, time as dtime, timedelta
@@ -109,6 +110,9 @@ def create_app(cfg: Config = DEFAULT, share: bool = False) -> FastAPI:
     jobs = JobRunner()
     share_key = load_key(cfg.data_dir) if share else b""
     pairing = Pairing() if share else None
+    # The LAN listener, when there is one. A dict rather than a nonlocal so
+    # the handlers below can replace it without rebinding a closure.
+    lan: dict = {}
     if pairing is not None:
         # The console prints the code, and it must be the same object the
         # middleware checks against - a second copy would drift the moment
@@ -198,6 +202,99 @@ def create_app(cfg: Config = DEFAULT, share: bool = False) -> FastAPI:
             samesite="lax",
         )
         return response
+
+    @app.get("/api/share")
+    def share_status(request: Request) -> dict:
+        """Where a phone should point, and the code to type.
+
+        Only ever answered to this machine. The addresses and the current
+        pairing code are exactly what somebody would need to take over, so a
+        paired phone asking for them gets nothing.
+        """
+        client = request.client.host if request.client else ""
+        if client not in ("127.0.0.1", "::1", "localhost"):
+            raise HTTPException(403, "only from this computer")
+
+        from tsv.share import describe_addresses, local_addresses
+
+        offer, warnings = describe_addresses(local_addresses())
+        port = lan.get("port")
+        return {
+            "on": bool(lan.get("server")),
+            "port": port,
+            "code": pairing.code if pairing is not None else None,
+            "warnings": warnings,
+            "addresses": [
+                {
+                    "ip": address.ip,
+                    "hint": address.hint,
+                    "url": f"http://{address.ip}:{port}/pair" if port else None,
+                }
+                for address in offer
+            ],
+            "devices": list_devices(conn),
+        }
+
+    @app.get("/api/share/qr")
+    def share_qr(url: str, request: Request) -> Response:
+        """The address as something a phone camera can read.
+
+        Which is the whole point of this feature working on somebody else's
+        computer: nobody types an IP address correctly on a phone keyboard.
+        """
+        client = request.client.host if request.client else ""
+        if client not in ("127.0.0.1", "::1", "localhost"):
+            raise HTTPException(403, "only from this computer")
+        try:
+            import segno
+        except ImportError:
+            raise HTTPException(501, "segno is not installed") from None
+
+        buffer = io.BytesIO()
+        segno.make(url, error="m").save(buffer, kind="svg", scale=5, dark="#e8ecf4",
+                                        light=None)
+        return Response(buffer.getvalue(), media_type="image/svg+xml")
+
+    @app.post("/api/share/start")
+    def share_start(request: Request, port: int = 8000) -> dict:
+        """Begin listening on the local network.
+
+        A second listener rather than rebinding the first: the window keeps
+        its private loopback connection either way, and stopping sharing is
+        then just closing this one.
+        """
+        client = request.client.host if request.client else ""
+        if client not in ("127.0.0.1", "::1", "localhost"):
+            raise HTTPException(403, "only from this computer")
+        if not share:
+            raise HTTPException(400, "this server was not started with sharing")
+        if lan.get("server"):
+            return share_status(request)
+
+        import threading
+
+        import uvicorn
+
+        server = uvicorn.Server(uvicorn.Config(
+            app, host="0.0.0.0", port=port, log_level="warning",
+            lifespan="off", ws="none", access_log=False,
+        ))
+        thread = threading.Thread(target=server.run, daemon=True)
+        thread.start()
+        lan["server"] = server
+        lan["port"] = port
+        return share_status(request)
+
+    @app.post("/api/share/stop")
+    def share_stop(request: Request) -> dict:
+        client = request.client.host if request.client else ""
+        if client not in ("127.0.0.1", "::1", "localhost"):
+            raise HTTPException(403, "only from this computer")
+        server = lan.pop("server", None)
+        if server is not None:
+            server.should_exit = True
+        lan.pop("port", None)
+        return {"on": False}
 
     @app.get("/api/devices")
     def devices() -> list[dict]:
@@ -1165,6 +1262,52 @@ def create_app(cfg: Config = DEFAULT, share: bool = False) -> FastAPI:
         if not path.is_file():
             raise HTTPException(404)
         return FileResponse(path, media_type="image/jpeg")
+
+    @app.get("/api/clip/{video_id}")
+    def clip(
+        video_id: int,
+        t: float = Query(..., description="seconds into the recording"),
+        seconds: float = Query(10.0, gt=0, le=60),
+    ) -> Response:
+        """A few seconds around a moment, rather than the whole recording.
+
+        What a phone should get when somebody taps a result. Copying packets
+        rather than re-encoding makes this about as expensive as reading the
+        file, and turns 124 MB into under one.
+        """
+        row = conn.execute(
+            "SELECT path, duration FROM videos WHERE id = ?", (video_id,)
+        ).fetchone()
+        if row is None:
+            raise HTTPException(404, "no such video")
+
+        from tsv.clips import cut
+
+        # A moment past the end is not an error - the demuxer lands on the
+        # last keyframe and returns whatever follows it, which was a
+        # three-frame clip. Clamping makes that the last few seconds instead,
+        # which is at least what somebody asking for "the end" meant.
+        duration = float(row["duration"] or 0.0)
+        if duration:
+            t = max(0.0, min(float(t), max(0.0, duration - seconds)))
+
+        try:
+            data = cut(Path(row["path"]), at=t, seconds=seconds)
+        except FileNotFoundError:
+            raise HTTPException(410, "source file has moved or been deleted") from None
+        except ValueError as exc:
+            raise HTTPException(416, str(exc)) from None
+
+        return Response(
+            data,
+            media_type="video/mp4",
+            headers={
+                # Small, immutable for a given moment, and a phone scrubbing
+                # a result list will ask for the same one repeatedly.
+                "Cache-Control": "private, max-age=3600",
+                "Content-Length": str(len(data)),
+            },
+        )
 
     @app.get("/api/media/{video_id}")
     def media(video_id: int) -> FileResponse:

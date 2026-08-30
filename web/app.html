@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>TextSearchVDO</title>
   <link rel="stylesheet" href="/static/simple.css">
   <!-- Installable to a phone home screen, which is why no Android app
@@ -24,6 +24,7 @@
       <button type="button" class="ghost" id="people-toggle" aria-expanded="false" hidden>People</button>
       <button type="button" class="ghost" id="places-toggle" aria-expanded="false" hidden>Places</button>
       <button type="button" class="ghost" id="videos-toggle" aria-expanded="false" hidden>Videos</button>
+      <button type="button" class="ghost" id="share-toggle" aria-expanded="false">Phone</button>
       <button type="button" class="ghost" id="describe" hidden></button>
       <button type="button" id="add">Add video</button>
       <a class="ghost link" href="/advanced" title="Timeline, zones and cameras">Advanced</a>
@@ -160,6 +161,50 @@
       </div>
     </section>
 
+    <!-- Using it from a phone. Everything needed is on this one panel, so
+         nobody has to find a terminal or type an IP address. -->
+    <section class="panel" id="share-panel" hidden>
+      <div class="panel-head">
+        <div>
+          <h2>Use this from your phone</h2>
+          <p class="panel-note">
+            Search and add videos from a phone on the same WiFi, or plugged in
+            with USB tethering. Everything stays on this network &mdash;
+            nothing is uploaded anywhere.
+          </p>
+        </div>
+        <button type="button" class="ghost tiny" id="share-close">Close</button>
+      </div>
+
+      <div id="share-off">
+        <button type="button" id="share-start">Start</button>
+        <p class="panel-note" id="share-warnings"></p>
+      </div>
+
+      <div id="share-on" hidden>
+        <div class="share-grid">
+          <div class="share-qr">
+            <img id="share-qr-img" alt="Point your phone's camera at this">
+            <p class="fine">Point your phone's camera at this</p>
+          </div>
+          <div class="share-detail">
+            <div class="field">
+              <span>Or open this on the phone</span>
+              <div class="share-urls" id="share-urls"></div>
+            </div>
+            <div class="field">
+              <span>Then enter this code</span>
+              <div class="share-code" id="share-code"></div>
+            </div>
+            <button type="button" class="ghost tiny" id="share-stop">Stop sharing</button>
+          </div>
+        </div>
+
+        <h3>Phones that have been let in</h3>
+        <div class="share-devices" id="share-devices"></div>
+      </div>
+    </section>
+
     <!-- The library: what has been indexed, and how to get rid of it. -->
     <section class="panel" id="videos-panel" hidden>
       <div class="panel-head">
@@ -198,7 +243,10 @@
     <div class="player-box">
       <div class="player-head">
         <span id="player-caption"></span>
-        <button type="button" class="ghost tiny" id="player-close">Close</button>
+        <span class="player-actions">
+          <button type="button" class="linkish" id="player-whole" hidden>Whole recording</button>
+          <button type="button" class="ghost tiny" id="player-close">Close</button>
+        </span>
       </div>
       <video id="video" controls preload="metadata"></video>
     </div>
@@ -209,6 +257,7 @@
   <script src="/static/places.js"></script>
   <script src="/static/videos.js"></script>
   <script src="/static/upload.js"></script>
+  <script src="/static/share.js"></script>
   <script src="/static/simple.js"></script>
 </body>
 </html>

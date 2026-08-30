@@ -118,7 +118,11 @@ def run(cfg, title: str = "TextSearchVDO", width: int = 1180, height: int = 800)
     from tsv.api import create_app
 
     port = _free_port()
-    app = create_app(cfg)
+    # Sharing capability on, listening on loopback only. The middleware
+    # exempts this machine, so the window is unaffected; turning sharing on
+    # from the Share panel adds a second listener rather than changing
+    # what this one does.
+    app = create_app(cfg, share=True)
     server = uvicorn.Server(uvicorn.Config(
         app, host="127.0.0.1", port=port, log_level="warning",
         # Nothing here uses the lifespan protocol or websockets, and skipping

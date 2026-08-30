@@ -578,6 +578,34 @@ a chunk that was written while its reply was lost, so the client is re-sending
 something already stored. Telling it where the file actually ends lets it skip
 ahead rather than start over.
 
+### Sending a moment, not a recording
+
+A result is ten seconds of a file that may be half an hour long. Handing the
+browser the whole thing and asking it to seek is invisible on a desktop and
+the difference between watching and waiting on a phone.
+
+`clips.py` copies the packets around the moment straight into a new container.
+Nothing is re-encoded, so the cost is demuxing: **0.68 MB and 0.02 seconds
+against a 124 MB file** — about a hundred and eighty times less to send.
+
+Two things a stream copy gets wrong unless they are handled:
+
+**It has to begin on a keyframe.** A copy cannot start mid-GOP, or everything
+until the next keyframe decodes as garbage. So the clip opens slightly before
+the moment — which is what somebody wants anyway, since the interesting part
+is usually the approach.
+
+**The packets keep the timestamps they had.** Left alone, twelve seconds taken
+from three minutes in declares itself three minutes long: the player draws a
+scrubber across the whole recording, starts near the end of it, and the twelve
+seconds that exist are a sliver. It plays, and it lies about what it is. The
+timestamps are rebased to zero — a clip that reported `duration: 180.4` before
+the fix reports `12.6` after it.
+
+The codec is whatever the camera recorded. Phones record HEVC and play HEVC,
+so copying is the right default; re-encoding to be safe would turn a 0.02
+second operation into several.
+
 ### Why there is no Android app
 
 The page is responsive, streams video by range request, and uploads through a

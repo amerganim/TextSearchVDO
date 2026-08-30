@@ -217,9 +217,24 @@ parser actually grounded. It has a way back to the app.
 .venv/Scripts/python -m tsv share
 ```
 
-Prints the address to open and a six-digit pairing code. On the phone, join
-the same WiFi — or plug it in and turn on USB tethering — open the address,
-enter the code. Pairing lasts 30 days and survives restarts.
+Click **Phone** in the app, then **Start**: a QR code to point a camera at,
+the address, and a six-digit code. No terminal, which matters when the
+computer is not yours. `python -m tsv share` does the same from a command
+line.
+
+On the phone, join the same WiFi — or plug it in and turn on USB
+tethering — scan the code or open the address, then type the six digits.
+Pairing lasts 30 days and survives restarts.
+
+Windows asks once whether to allow the app on your network, and its dialog
+opens *behind* the window. The app says so when you press Start, because
+otherwise this looks like the feature simply not working.
+
+Tapping a result plays a **clip** of that moment rather than the whole
+recording: measured on real footage, 0.68 MB and 0.02 seconds against
+124 MB. Nothing is re-encoded, so it costs about what reading the file
+costs. *Whole recording* is one click away when what happened next is the
+point.
 
 **No Android app is needed, and one would not have helped.** The page is
 already responsive, already streams video by HTTP range request, and already
