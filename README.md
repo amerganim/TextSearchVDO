@@ -226,9 +226,22 @@ On the phone, join the same WiFi — or plug it in and turn on USB
 tethering — scan the code or open the address, then type the six digits.
 Pairing lasts 30 days and survives restarts.
 
-Windows asks once whether to allow the app on your network, and its dialog
-opens *behind* the window. The app says so when you press Start, because
-otherwise this looks like the feature simply not working.
+**Windows Firewall will block this until told not to**, and it does so
+silently: the server binds, the address prints, the QR scans, and the
+phone then sits there forever. Both `tsv share` and the Phone panel check
+for it and print the fix, which needs an Administrator PowerShell once:
+
+```powershell
+New-NetFirewallRule -DisplayName "TextSearchVDO" -Direction Inbound -Protocol TCP -LocalPort 8000 -Action Allow -Profile Private,Public -RemoteAddress LocalSubnet
+```
+
+`-RemoteAddress LocalSubnet` keeps it to your own network rather than
+opening the port outright.
+
+Sharing also warns when Windows has the network marked **Public** — which
+is what it calls one you have not said you trust. A private *address* and
+a trusted *network* are different questions, and only the second is about
+who else can see the traffic.
 
 Tapping a result plays a **clip** of that moment rather than the whole
 recording: measured on real footage, 0.82 MB and 0.01 seconds against

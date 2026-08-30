@@ -236,3 +236,84 @@ def test_having_nowhere_safe_to_bind_says_what_to_do():
     offer, warnings = describe_addresses([Address("127.0.0.1", "loopback", "here")])
     assert offer == []
     assert any("USB tethering" in w for w in warnings)
+
+
+# ---------- whose network is this ----------
+#
+# A private address and a trusted network are different questions, and only
+# the second is about who else can see the traffic. A laptop on cafe WiFi
+# still gets a 192.168.x address.
+
+def test_a_network_windows_calls_public_is_warned_about():
+    from tsv.share import Address
+
+    offer, warnings = describe_addresses(
+        [Address("192.168.1.14", "private", "local network")], category="public"
+    )
+    assert [a.ip for a in offer] == ["192.168.1.14"], "still usable, just flagged"
+    assert any("Public" in w for w in warnings)
+    assert any("USB tethering" in w for w in warnings), "no way out is offered"
+
+
+def test_a_trusted_network_is_not_nagged_about():
+    from tsv.share import Address
+
+    _, warnings = describe_addresses(
+        [Address("192.168.1.14", "private", "local network")], category="private"
+    )
+    assert not any("Public" in w for w in warnings)
+
+
+def test_a_cable_is_not_judged_by_the_wifi_it_is_not_on():
+    """Windows marks every new interface Public, including a USB tether.
+
+    Warning there would send somebody away from the safest option in the
+    application - a link with nobody else on it at all.
+    """
+    from tsv.share import Address
+
+    _, warnings = describe_addresses(
+        [Address("192.168.42.129", "private", "USB tethering (Android)")],
+        category="public",
+    )
+    assert not any("Public" in w for w in warnings)
+
+
+def test_asking_windows_never_raises():
+    """Called before anything is bound, on machines this has never seen."""
+    from tsv.share import network_category
+
+    assert network_category() in {"", "public", "private"}
+
+
+# ---------- the failure that looks like success ----------
+
+def test_the_firewall_fix_is_scoped_to_the_local_network():
+    """A phone on the same network is the entire use case.
+
+    Opening the port to anything wider would be a rule somebody has to
+    remember to remove, and nobody does.
+    """
+    from tsv.share import firewall_command
+
+    command = firewall_command(8000)
+    assert "-LocalPort 8000" in command
+    assert "-Direction Inbound" in command
+    assert "-RemoteAddress LocalSubnet" in command, "opened wider than needed"
+
+
+def test_asking_about_the_firewall_never_raises_or_hangs():
+    """Called while somebody is waiting for an address to appear.
+
+    An earlier version walked every inbound rule asking each for its ports,
+    which on a normal machine's 167 rules took over 25 seconds and timed out
+    into "cannot tell" - a wrong answer delivered slowly.
+    """
+    import time
+
+    from tsv.share import firewall_allows
+
+    started = time.time()
+    answer = firewall_allows(8000)
+    assert answer in {True, False, None}
+    assert time.time() - started < 20, "slow enough to be reported as unknown"

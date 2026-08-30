@@ -35,6 +35,8 @@ import ipaddress
 import secrets
 import socket
 import sqlite3
+import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from hashlib import blake2b, sha256
@@ -121,15 +123,123 @@ def local_addresses() -> list[Address]:
     return sorted(addresses, key=lambda a: (order.get(a.kind, 9), a.ip))
 
 
-def describe_addresses(addresses: list[Address]) -> tuple[list[Address], list[str]]:
+def network_category() -> str:
+    """What Windows thinks of the network this machine is on.
+
+    "private", "public", or "" when it cannot be told. Worth asking, because
+    a private *address* and a trusted *network* are different questions and
+    only the second one is about who else is on it. A laptop on café WiFi
+    still gets a 192.168.x address; what makes that different from a home
+    network is a judgement Windows has already made and this had ignored.
+
+    Best effort: one PowerShell call, a second at most, and a machine that
+    will not answer is treated as unknown rather than as safe.
+    """
+    if sys.platform != "win32":
+        return ""
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+             "(Get-NetConnectionProfile | Select-Object -First 1"
+             " -ExpandProperty NetworkCategory)"],
+            capture_output=True, text=True, timeout=8, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    answer = (result.stdout or "").strip().lower()
+    if "public" in answer:
+        return "public"
+    if "private" in answer or "domain" in answer:
+        return "private"
+    return ""
+
+
+def firewall_allows(port: int) -> bool | None:
+    """Whether Windows would let a phone reach this port.
+
+    True, False, or None when it cannot be determined. Worth asking, because
+    this is the failure that looks exactly like success: the server binds,
+    the address is printed, the QR code scans - and Windows drops every packet
+    from the phone without a word to anybody. Somebody in that position
+    concludes the feature is broken, and they are not wrong to.
+
+    Testing it by connecting is not possible from here: a connection from this
+    machine to its own address never touches the firewall.
+    """
+    if sys.platform != "win32":
+        return None
+    # Port filters first, then the rules behind them. The obvious way round -
+    # walk every inbound rule and ask each for its ports - calls a slow cmdlet
+    # once per rule, which on this machine's 167 rules took over 25 seconds
+    # and timed out into "cannot tell". This way is one query and about two.
+    #
+    # Deliberately free of nested quotes: it is passed through -Command as a
+    # single argument, and escaping is how the first version came back empty.
+    script = (
+        "$m = Get-NetFirewallPortFilter -ErrorAction SilentlyContinue | "
+        "Where-Object {{ $_.LocalPort -contains '{port}' }} | "
+        "Get-NetFirewallRule -ErrorAction SilentlyContinue | "
+        "Where-Object {{ $_.Direction -eq 'Inbound' -and $_.Enabled -eq 'True' "
+        "-and $_.Action -eq 'Allow' }}; "
+        "if ($m) {{ Write-Output yes }} else {{ Write-Output no }}"
+    ).format(port=port)
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            capture_output=True, text=True, timeout=25, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    answer = (result.stdout or "").strip().lower()
+    if answer.startswith("yes"):
+        return True
+    if answer.startswith("no"):
+        return False
+    return None
+
+
+def firewall_command(port: int) -> str:
+    """What to run, as administrator, to let a phone in.
+
+    Scoped to the local subnet rather than opened to the world: this only
+    ever needs to serve a device on the same network, and a rule that says so
+    is one nobody has to remember to remove.
+    """
+    return (
+        'New-NetFirewallRule -DisplayName "TextSearchVDO" -Direction Inbound '
+        f"-Protocol TCP -LocalPort {port} -Action Allow "
+        "-Profile Private,Public -RemoteAddress LocalSubnet"
+    )
+
+
+def describe_addresses(
+    addresses: list[Address], category: str | None = None
+) -> tuple[list[Address], list[str]]:
     """(what to offer, what to warn about)."""
     offer = [a for a in addresses if a.kind == "private"]
     warnings = []
+
     if any(a.kind == "public" for a in addresses):
         warnings.append(
             "This machine has a public address. Sharing binds to every "
             "interface, so do not do this on a network you do not control."
         )
+
+    # A point-to-point link has nobody else on it, so Windows calling it
+    # public says nothing useful - it says that about every new interface.
+    tethered = any(
+        a.hint.startswith("USB tethering") or "hotspot" in a.hint for a in offer
+    )
+    if category is None:
+        category = network_category()
+    if category == "public" and offer and not tethered:
+        warnings.append(
+            "Windows has this network marked Public, which is what it calls "
+            "one you have not said you trust. Pairing still protects the "
+            "index, but nothing here is encrypted - so on a network you do "
+            "not control, plug the phone in and use USB tethering instead."
+        )
+
     if not offer:
         warnings.append(
             "No private network address found. Join a WiFi network, or plug "

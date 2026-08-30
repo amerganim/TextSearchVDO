@@ -118,6 +118,9 @@ def create_app(cfg: Config = DEFAULT, share: bool = False) -> FastAPI:
         # middleware checks against - a second copy would drift the moment
         # the code rotated after a bad guess.
         app.state.pairing_code = lambda: pairing.code
+        # So a listener started outside this process - `tsv share` - can say
+        # so, rather than the panel offering to Start a port already bound.
+        app.state.note_lan = lambda port: lan.update(server=True, port=port)
 
     @app.middleware("http")
     async def require_pairing(request, call_next):
@@ -215,13 +218,27 @@ def create_app(cfg: Config = DEFAULT, share: bool = False) -> FastAPI:
         if client not in ("127.0.0.1", "::1", "localhost"):
             raise HTTPException(403, "only from this computer")
 
-        from tsv.share import describe_addresses, local_addresses
+        from tsv.share import (
+            describe_addresses, firewall_allows, firewall_command,
+            local_addresses,
+        )
 
         offer, warnings = describe_addresses(local_addresses())
         port = lan.get("port")
+        # Only worth asking once something is actually listening, and only on
+        # the machine that would be blocking it.
+        blocked = firewall_allows(port) is False if port else False
+        if blocked:
+            warnings.append(
+                "Windows Firewall is not letting anything reach this port, so "
+                "a phone will scan the code and then sit there. Run this once "
+                "in an Administrator PowerShell: " + firewall_command(port)
+            )
         return {
             "on": bool(lan.get("server")),
             "port": port,
+            "firewall_blocked": blocked,
+            "firewall_fix": firewall_command(port) if blocked else "",
             "code": pairing.code if pairing is not None else None,
             "warnings": warnings,
             "addresses": [

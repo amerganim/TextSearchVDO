@@ -739,6 +739,18 @@ def cmd_share(args: argparse.Namespace) -> int:
     print("  On the phone: join the same WiFi, or plug it in and turn on USB")
     print("  tethering, then open the address above and enter the code.")
     print()
+
+    # The failure that looks exactly like success: everything above is true,
+    # and Windows drops every packet from the phone without telling anybody.
+    from tsv.share import firewall_allows, firewall_command
+
+    if firewall_allows(port) is False:
+        print("  Windows Firewall is not letting anything reach this port, so")
+        print("  the phone will scan the code and then sit there. To fix it,")
+        print("  run this once in an Administrator PowerShell:")
+        print()
+        print("    " + firewall_command(port))
+        print()
     _print_qr(url)
     print("  Ctrl+C to stop sharing.")
     print()
@@ -747,6 +759,8 @@ def cmd_share(args: argparse.Namespace) -> int:
     # even when the output is piped somewhere that buffers.
     sys.stdout.flush()
 
+    if hasattr(app.state, "note_lan"):
+        app.state.note_lan(port)
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
     return 0
 
