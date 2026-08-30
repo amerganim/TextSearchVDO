@@ -401,3 +401,35 @@ def test_a_clip_that_will_not_play_is_retried_once_in_h264():
     assert "retryAsH264" in js
     assert 'dataset.retried' in js, "nothing stops it retrying forever"
     assert 'addEventListener("error"' in js, "playback failure is not noticed"
+
+
+# ---------- knowing which one to double-click ----------
+
+def test_the_icon_is_committed_and_covers_the_small_sizes():
+    """16 pixels is where an icon is actually seen - a taskbar button, a file
+    listing - and it is the size most icons stop working at."""
+    root = WEB.parent
+    icon = root / "TextSearchVDO.ico"
+    assert icon.is_file(), "run tools/make_icon.py"
+
+    from PIL import Image
+
+    with Image.open(icon) as image:
+        sizes = {s[0] for s in image.info.get("sizes", set())}
+    assert 16 in sizes and 32 in sizes and 256 in sizes, sizes
+
+
+def test_the_shortcut_points_at_the_launcher_that_can_report_problems():
+    """Straight at pythonw would skip the checks in the .vbs, and a missing
+    virtual environment would become a double-click that does nothing."""
+    source = (WEB.parent / "tsv" / "shortcut.py").read_text(encoding="utf-8")
+    assert "wscript.exe" in source
+    assert "TextSearchVDO.vbs" in source
+    assert "IconLocation" in source
+
+
+def test_the_phone_home_screen_gets_a_raster_icon_too():
+    """iOS ignores SVG icons and will otherwise use a screenshot of the page."""
+    html = (WEB / "app.html").read_text(encoding="utf-8")
+    assert 'rel="apple-touch-icon"' in html
+    assert (WEB / "icon-512.png").is_file()

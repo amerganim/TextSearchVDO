@@ -58,6 +58,10 @@ if errorlevel 1 (
 )
 
 echo.
-echo   Done. Start the app with TextSearchVDO.bat
+echo   Making a launcher with the app icon on it.
+.venv\Scripts\python -m tsv shortcut --desktop
+
+echo.
+echo   Done. Double-click TextSearchVDO - the one with the blue icon.
 echo.
 pause

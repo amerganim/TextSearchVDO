@@ -488,6 +488,42 @@ def cmd_listen(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_shortcut(args: argparse.Namespace) -> int:
+    """Make a launcher with the app's icon on it."""
+    from tsv.shortcut import create, desktop, start_menu
+
+    project = Path(__file__).resolve().parent.parent
+    made = []
+
+    targets = [(project / "TextSearchVDO.lnk", "in this folder")]
+    if args.desktop:
+        where = desktop()
+        if where is None:
+            print("  could not find your Desktop folder")
+        else:
+            targets.append((where / "TextSearchVDO.lnk", "on the Desktop"))
+    if args.start_menu:
+        where = start_menu()
+        if where is None:
+            print("  could not find your Start Menu folder")
+        else:
+            targets.append((where / "TextSearchVDO.lnk", "in the Start Menu"))
+
+    for link, where in targets:
+        ok, message = create(project, link)
+        if ok:
+            made.append(where)
+            print(f"  created {where}")
+        else:
+            print(f"  FAILED {where}: {message}")
+
+    if made:
+        print()
+        print("  Double-click TextSearchVDO - it now has the app's icon, so it")
+        print("  is the one to pick rather than the .bat or the .vbs.")
+    return 0 if made else 1
+
+
 def cmd_hardware(args: argparse.Namespace) -> int:
     """What this machine can run, and what it is allowed to ship."""
     from tsv.catalogue import (
@@ -931,6 +967,15 @@ def main(argv: list[str] | None = None) -> int:
     p_share.add_argument("--force", action="store_true",
                          help="bind even with no private network address")
     p_share.set_defaults(func=cmd_share)
+
+    p_shortcut = sub.add_parser(
+        "shortcut", help="make a launcher with the app icon on it"
+    )
+    p_shortcut.add_argument("--desktop", action="store_true",
+                            help="also put one on the Desktop")
+    p_shortcut.add_argument("--start-menu", action="store_true",
+                            help="also put one in the Start Menu")
+    p_shortcut.set_defaults(func=cmd_shortcut)
 
     p_devices = sub.add_parser("devices", help="phones that have been paired")
     p_devices.add_argument("--revoke", type=int, metavar="ID",

@@ -24,3 +24,8 @@ testrun/
 uitest/
 freshtest/
 halftest/
+
+# Shortcuts hold absolute paths, so they belong to one machine.
+# `python -m tsv shortcut` makes them; the .ico they point at is
+# committed.
+*.lnk

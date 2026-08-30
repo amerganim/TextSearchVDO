@@ -344,6 +344,13 @@ def create_app(cfg: Config = DEFAULT, share: bool = False) -> FastAPI:
                 "sizes": "any",
                 "type": "image/svg+xml",
                 "purpose": "any maskable",
+            }, {
+                # iOS ignores SVG icons for the home screen, so it gets a
+                # raster one or it gets a screenshot of the page.
+                "src": "/static/icon-512.png",
+                "sizes": "512x512",
+                "type": "image/png",
+                "purpose": "any",
             }],
         })
 

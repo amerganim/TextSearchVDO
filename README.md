@@ -163,7 +163,13 @@ Double-click **TextSearchVDO.bat**, or:
 .venv/Scripts/python -m tsv app
 ```
 
-Use **TextSearchVDO.vbs** to launch it, not the `.bat`. Both start the same
+Double-click **TextSearchVDO** — the shortcut with the blue play icon.
+`setup.bat` makes it, and `python -m tsv shortcut --desktop --start-menu`
+makes more. It carries an icon because the files it sits next to cannot:
+Windows draws every `.vbs` with the same generic script glyph, so the
+thing to double-click looked identical to the thing not to.
+
+It points at **TextSearchVDO.vbs**, not the `.bat`. Both start the same
 app, but a `.bat` is run by `cmd.exe`, and `cmd.exe` shows a console window
 before anything else happens &mdash; no amount of `pythonw` suppresses that
 from inside a batch file. The `.vbs` has no console to begin with. The `.bat`
