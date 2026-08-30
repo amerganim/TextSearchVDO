@@ -17,7 +17,7 @@ from tsv import db, probe
 from tsv.config import Config
 from tsv.motion.decode import trace_windows
 from tsv.motion.packets import scan
-from tsv.motion.segments import activity_to_segments
+from tsv.motion.segments import Segment, activity_to_segments
 from tsv.thumbs import extract_thumbs
 
 
@@ -95,6 +95,32 @@ def _already_ingested(conn: sqlite3.Connection, info: probe.VideoInfo) -> int | 
     return int(row["id"]) if unchanged else None
 
 
+def _even_windows(duration: float, window: float) -> list[Segment]:
+    """Cut a whole file into equal pieces, for when nothing stood out.
+
+    One segment spanning everything would technically work and be useless:
+    every search returns the same result, ranking has a single candidate to
+    order, and "when did this happen" is answered with the length of the
+    recording. Windows give search something to choose between and a moment
+    to point at.
+    """
+    window = max(1.0, float(window))
+    if duration <= window:
+        return [Segment(0.0, duration, 0.0, duration / 2.0)]
+
+    edges = []
+    start = 0.0
+    while start < duration - 0.01:
+        end = min(start + window, duration)
+        # Fold a final sliver into the one before it rather than leaving a
+        # one second segment nobody wants to see in a result list.
+        if duration - end < window * 0.4:
+            end = duration
+        edges.append(Segment(start, end, 0.0, (start + end) / 2.0))
+        start = end
+    return edges
+
+
 def ingest_file(
     conn: sqlite3.Connection,
     path: Path,
@@ -128,6 +154,18 @@ def ingest_file(
         segments = activity_to_segments(
             trace.times, trace.scores, cfg.segments, sample_period, duration=duration
         )
+
+        # Nothing stood out. On a short file that is far more likely to mean
+        # the motion gate had no contrast to work with - a handheld camera,
+        # where everything moves and nothing is background - than that the
+        # recording is empty. Looking properly costs seconds at this length,
+        # and not looking costs the user a video they cannot search at all.
+        whole_file = False
+        if not segments and duration <= cfg.segments.whole_file_under_seconds:
+            segments = _even_windows(
+                duration, cfg.segments.whole_file_window_seconds
+            )
+            whole_file = True
     except Exception as exc:  # noqa: BLE001
         return IngestResult(path=path, status="failed", note=f"{type(exc).__name__}: {exc}")
 
@@ -179,6 +217,13 @@ def ingest_file(
         note = "all-intra stream: packet prefilter skipped, decoded in full"
     elif info.ts_source == "mtime-duration":
         note = "start time guessed from file mtime; timeline may be off"
+
+    note = ""
+    if whole_file:
+        note = (
+            "no activity stood out, so the whole file was indexed - usual for "
+            "a handheld recording, where nothing is background"
+        )
 
     return IngestResult(
         path=path,

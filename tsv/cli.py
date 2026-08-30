@@ -838,6 +838,16 @@ def cmd_devices(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Transcripts and captions are model output in whatever language was
+    # spoken, and a Windows console defaults to cp1252. Printing a Bengali
+    # line there raises UnicodeEncodeError and takes the whole command down
+    # - the transcription worked, and `tsv listen` died reporting it.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError, ValueError):
+            pass
+
     parser = argparse.ArgumentParser(prog="tsv", description=__doc__)
     parser.add_argument("--data-dir", default=str(DEFAULT.data_dir))
     parser.add_argument("--model-dir", default=None,

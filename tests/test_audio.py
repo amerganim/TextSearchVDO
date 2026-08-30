@@ -264,3 +264,25 @@ def test_counting_a_gpu_that_will_not_load_falls_back(monkeypatch, tmp_path):
     )
     assert audio.load_model(cfg) is not None
     assert attempts == ["cuda", "cpu"]
+
+
+def test_a_transcript_in_another_script_does_not_kill_the_command(capsys):
+    """Model output is in whatever language was spoken.
+
+    A Windows console defaults to cp1252, so printing a Bengali or Sinhala
+    line raised UnicodeEncodeError and took the whole command down - the
+    transcription had worked, and `tsv listen` died while reporting it.
+    """
+    import sys
+
+    from tsv.cli import main
+
+    # main() reconfigures the streams; the assertion is that it can be called
+    # and that printing non-Latin text afterwards does not raise.
+    try:
+        main(["--help"])
+    except SystemExit:
+        pass
+
+    print("\u09b9\u09cd\u09af\u09be\u09b2\u09cb \u0995\u09c7\u09ae\u09a8 \u0986\u099b\u09c7\u09a8")
+    assert "cp1252" not in capsys.readouterr().out

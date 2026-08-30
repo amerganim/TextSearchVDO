@@ -141,6 +141,30 @@ flowchart TD
     FTS --> READY(["Searchable"])
 ```
 
+### When the gate has nothing to work with
+
+Every threshold above assumes what a fixed camera gives it: activity is rare
+and stands out against a quiet baseline. A phone held in the hand breaks that
+completely. Everything moves, every P-frame costs about the same, and there
+is no contrast to find.
+
+Measured on a real 34-second phone clip: the busiest bin was **1.06×** its own
+baseline, against the **1.08×** required. Zero candidate windows, zero
+segments, zero objects — a video that could not be searched at all, reported
+as a successful import. The same file analysed in full has a person in it at
+0.81 confidence.
+
+So "nothing stood out" has two meanings, and only one of them is "nothing
+happened". The other is "this signal cannot tell", and the answer there is to
+look properly. A recording shorter than `whole_file_under_seconds` that
+produces no candidates is indexed in full — cut into windows rather than one
+long segment, because a single segment spanning everything makes every search
+return the same result and answers *when* with the length of the recording.
+
+It is bounded by length on purpose: a static camera overnight genuinely has
+nothing in it, and decoding eight hours to confirm that is the exact cost
+this stage exists to avoid.
+
 ### Why it is split this way
 
 | Decision | Reason |

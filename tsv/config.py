@@ -89,6 +89,30 @@ class SegmentConfig:
     # Context around each segment so playback starts before the action.
     pre_roll_seconds: float = 1.5
     post_roll_seconds: float = 1.5
+    # When nothing stands out at all, index the whole file - up to this long.
+    #
+    # The motion gate assumes what a fixed camera gives it: activity is rare
+    # and stands out against a quiet baseline. A phone held in the hand breaks
+    # that completely. Everything moves, every P-frame costs about the same,
+    # and there is no contrast to find - a 34 second clip measured here had a
+    # peak only 1.06x its own baseline against the 1.08 needed, so it produced
+    # no segments, no objects, and nothing to search. Analysed in full it had
+    # a person in it at 0.81.
+    #
+    # "Nothing stood out" therefore has two meanings, and only one of them is
+    # "nothing happened". The other is "this signal cannot tell", and the
+    # answer there is to look properly. Bounded by length because a static
+    # camera overnight genuinely has nothing in it, and decoding eight hours
+    # to confirm that is the exact cost this stage exists to avoid.
+    whole_file_under_seconds: float = 600.0
+    # And in windows of this length rather than one long one.
+    #
+    # A single segment spanning the whole clip makes every search return the
+    # same thing: the answer to "when" becomes "somewhere in these 34
+    # seconds", every query scores near-identically because there is only one
+    # candidate, and captioning describes the middle frame once for the lot.
+    # Windows give search something to rank and a moment to point at.
+    whole_file_window_seconds: float = 15.0
 
 
 @dataclass(frozen=True)
