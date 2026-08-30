@@ -279,15 +279,13 @@ _CAPTIONS = (
         key="florence2-large-ft",
         stage="captions",
         title="Florence-2-large-ft",
-        quality="longer and more accurate descriptions; roughly three times the cost per image, and this is already the slowest stage.",
+        quality="names what base only gestures at - measured on the same crop, base gave \"a mannequin standing on a chair\" where this gave \"a woman standing on a set of stairs, a pink hat, holding a metal pole\". About three times the cost per image, and this is already the slowest stage.",
         licence="MIT",
         shippable=True,
         approx_mb=1540,
         min_ram_mb=12288,
         wants_gpu=True,
         tier=1,
-        available=False,
-        unavailable_reason="not yet wired into the captioning pipeline",
     ),
 )
 
@@ -410,7 +408,7 @@ def in_use(cfg) -> dict[str, str]:
         "detect": cfg.detect.model_file.replace(".onnx", ""),
         "faces": cfg.face.name,
         "search": cfg.clip.name,
-        "captions": "florence2-base-ft",
+        "captions": cfg.caption.name,
         "audio": cfg.audio.model_dir,
     }
 

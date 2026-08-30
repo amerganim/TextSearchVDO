@@ -19,7 +19,8 @@ import pytest
 from tsv import db
 from tsv.config import DEFAULT
 from tsv.models.caption import (
-    TASKS, Vocabulary, _byte_decoder, build_captioner, crop_for_caption, preprocess,
+    TASKS, Caption, Vocabulary, _byte_decoder, build_captioner, crop_for_caption,
+    preprocess,
 )
 
 
@@ -243,3 +244,82 @@ def test_the_outstanding_count_falls_as_tracklets_are_described(indexed):
         "SELECT COUNT(*) c FROM tracklets WHERE caption IS NULL AND label = 'person'"
     ).fetchone()["c"]
     assert outstanding == 1
+
+
+# ---------- switching model size ----------
+
+def test_the_cache_shape_is_read_from_the_graph_not_hardcoded():
+    """This is what kept the large model from working.
+
+    base is 6 layers of 12 heads, large is 12 of 16. With those as module
+    constants the large graph loaded, ran, and produced nothing usable -
+    every key-value tensor was the wrong shape. Asking the graph is both
+    easier and survives the next model.
+    """
+    source = (
+        Path(__file__).resolve().parent.parent / "tsv" / "models" / "caption.py"
+    ).read_text(encoding="utf-8")
+    assert "_read_cache_shape" in source
+    assert "past_key_values" in source
+    # The constants remain, but only as a fallback for a graph that will not
+    # declare itself.
+    assert "self.cache_shape" in source
+
+
+@pytest.mark.skipif(
+    not (DEFAULT.model_dir / "florence2-large" / "vision_encoder.onnx").is_file(),
+    reason="run tools/fetch_caption_model.py --model large",
+)
+def test_base_and_large_report_different_cache_shapes():
+    from tsv.models.caption import build_captioner
+
+    base = build_captioner(DEFAULT.model_dir / "florence2")
+    large = build_captioner(DEFAULT.model_dir / "florence2-large")
+    assert base is not None and large is not None
+    assert base.cache_shape == (6, 12, 64)
+    assert large.cache_shape == (12, 16, 64)
+    assert base.cache_shape != large.cache_shape
+
+
+def test_the_two_sizes_live_in_separate_folders():
+    """So both can be installed and switched between without re-downloading."""
+    assert DEFAULT.caption.model_dir == "florence2"
+    assert DEFAULT.large_captions.caption.model_dir == "florence2-large"
+    assert DEFAULT.large_captions.caption.name != DEFAULT.caption.name
+
+
+def test_an_empty_caption_falls_back_rather_than_being_stored():
+    """Stored as-is it is worse than a failure.
+
+    Florence-2 large returns an empty string for some crops under
+    more_detailed while answering the same image under detailed. Written to
+    the database that tracklet counts as captioned, is never retried, and can
+    never be found by anything it contains.
+    """
+    from tsv.captioning import _FALLBACK_TASKS, _describe
+
+    class Stub:
+        def __init__(self):
+            self.asked = []
+
+        def caption(self, crop, task):
+            self.asked.append(task)
+            text = "" if task == "more_detailed" else "a person on the stairs"
+            return Caption(text=text, task=task, tokens=len(text.split()))
+
+    stub = Stub()
+    result = _describe(stub, object(), "more_detailed")
+    assert result is not None
+    assert result.text == "a person on the stairs"
+    assert stub.asked[0] == "more_detailed", "the wanted task must be tried first"
+    assert len(stub.asked) > 1, "it gave up after one empty answer"
+
+
+def test_a_model_that_never_answers_is_a_failure_not_an_empty_caption():
+    from tsv.captioning import _describe
+
+    class Silent:
+        def caption(self, crop, task):
+            return Caption(text="   ", task=task, tokens=0)
+
+    assert _describe(Silent(), object(), "more_detailed") is None

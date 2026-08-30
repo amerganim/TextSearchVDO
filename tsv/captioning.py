@@ -51,6 +51,33 @@ class CaptionSummary:
         }
 
 
+# Prompts in order of how much they ask for. Falling back down this list is
+# not about quality - it is that the most demanding prompt sometimes returns
+# nothing at all, and a shorter description beats none.
+_FALLBACK_TASKS = ("more_detailed", "detailed", "plain")
+
+
+def _describe(captioner, crop, task: str):
+    """One caption, retrying with a simpler prompt if the model says nothing.
+
+    Florence-2 large returns an empty string for some crops under
+    `more_detailed` while answering the same image under `detailed` - a real
+    case here was a 160x140 crop that produced nothing for seventeen seconds
+    and a full sentence when asked less. Stored as-is that is worse than a
+    failure: the tracklet counts as captioned, is never retried, and can
+    never be found by anything it contains.
+    """
+    tasks = [task] + [t for t in _FALLBACK_TASKS if t != task]
+    for attempt in tasks:
+        try:
+            caption = captioner.caption(crop, attempt)
+        except Exception:  # noqa: BLE001 - one bad crop must not stop the run
+            return None
+        if caption.text and caption.text.strip():
+            return caption
+    return None
+
+
 def pending_tracklets(conn: sqlite3.Connection, cfg: Config, force: bool = False) -> list:
     """Tracklets that want a caption, newest first.
 
@@ -145,9 +172,8 @@ def caption_tracklets(
                     on_progress(done, summary.considered)
                 continue
 
-            try:
-                caption = captioner.caption(crop, cfg.caption.task)
-            except Exception:  # noqa: BLE001 - one bad crop must not stop the run
+            caption = _describe(captioner, crop, cfg.caption.task)
+            if caption is None:
                 summary.failed += 1
                 done += 1
                 if on_progress:

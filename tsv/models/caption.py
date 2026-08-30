@@ -47,6 +47,12 @@ TASKS = {
     "more_detailed": "<MORE_DETAILED_CAPTION>",
 }
 
+# The shape of the decoder's key-value cache, which differs per model size:
+# base is 6 layers of 12 heads, large is 12 of 16. These are the fallbacks
+# for a graph that will not declare itself; the real values are read from the
+# decoder's own inputs at load time. Hardcoding them is what kept the large
+# model from working - it loaded, ran, and produced nothing usable, because
+# every cache tensor was the wrong shape.
 DECODER_LAYERS = 6
 NUM_HEADS = 12
 HEAD_DIM = 64
@@ -229,10 +235,50 @@ class Florence2Captioner:
         )[0]
         return np.asarray(hidden), attention_mask
 
+    @property
+    def cache_shape(self) -> tuple[int, int, int]:
+        """(layers, heads, head dim), read from the decoder graph itself.
+
+        Every one of these is declared on the graph's own `past_key_values`
+        inputs, so asking is both easier and more honest than keeping a table
+        of model sizes that has to be updated whenever a new one appears -
+        which is precisely how the large model came to be listed as available
+        while not working.
+        """
+        if getattr(self, "_cache_shape", None) is None:
+            self._cache_shape = self._read_cache_shape()
+        return self._cache_shape
+
+    def _read_cache_shape(self) -> tuple[int, int, int]:
+        session = getattr(self.decoder, "_session", None)
+        if session is None:
+            return DECODER_LAYERS, NUM_HEADS, HEAD_DIM
+
+        layers, heads, dim = set(), None, None
+        for spec in session.get_inputs():
+            if "past_key_values" not in spec.name:
+                continue
+            parts = spec.name.split(".")
+            if len(parts) >= 2 and parts[1].isdigit():
+                layers.add(int(parts[1]))
+            shape = list(spec.shape)
+            # [batch, heads, sequence, head_dim] - the two fixed axes are the
+            # ones worth reading; the others are symbolic.
+            if len(shape) == 4:
+                if isinstance(shape[1], int):
+                    heads = shape[1]
+                if isinstance(shape[3], int):
+                    dim = shape[3]
+
+        if not layers or heads is None or dim is None:
+            return DECODER_LAYERS, NUM_HEADS, HEAD_DIM
+        return len(layers), int(heads), int(dim)
+
     def _empty_cache(self, batch: int) -> dict[str, np.ndarray]:
-        empty = np.zeros((batch, NUM_HEADS, 0, HEAD_DIM), dtype=np.float32)
+        layers, heads, dim = self.cache_shape
+        empty = np.zeros((batch, heads, 0, dim), dtype=np.float32)
         cache = {}
-        for layer in range(DECODER_LAYERS):
+        for layer in range(layers):
             for side in ("decoder", "encoder"):
                 for kind in ("key", "value"):
                     cache[f"past_key_values.{layer}.{side}.{kind}"] = empty

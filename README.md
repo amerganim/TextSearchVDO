@@ -630,6 +630,20 @@ become searchable - from the same environment:
 .venv-export/Scripts/python tools/fetch_caption_model.py --out data/models
 ```
 
+### A bigger caption model, where the CPU can spare it
+
+```bash
+.venv-export/Scripts/python tools/fetch_caption_model.py --model large --out data/models
+.venv/Scripts/python -m tsv caption --large --force
+```
+
+Florence-2-large (1.5 GB) names what base only gestures at. On the same
+crop, base gave *"a mannequin standing on a chair"* where large gave *"a
+woman standing on a set of stairs... a pink hat... holding a metal pole"*.
+It costs about three times as long — roughly 15 seconds a crop against 5
+— and this is already the slowest stage, so base stays the default. Both
+install side by side and `--large` picks between them.
+
 That fetches Florence-2-base-ft as four int8 ONNX graphs (~275 MB) plus its
 task prompts, tokenised once so the runtime needs no tokenizer. Once it is
 there, captioning runs as the last stage of every import. It costs about six

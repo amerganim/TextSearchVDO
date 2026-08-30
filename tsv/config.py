@@ -255,6 +255,14 @@ class CaptionConfig:
     """
 
     enabled: bool = True
+    # "florence2" is base, "florence2-large" is the larger one. Both can be
+    # installed side by side; this picks which is used.
+    #
+    # Measured on the same crops, large is worth the money where a CPU can
+    # spare it: base called a woman on a staircase "a mannequin standing on a
+    # chair", where large gave "a woman standing on a set of stairs... a pink
+    # hat... holding a metal pole". It costs about three times as long -
+    # roughly 15 seconds a crop against 5.
     model_dir: str = "florence2"
     # Length is nearly free once the image is encoded, so ask for the most
     # detailed description available: more words means more to search.
@@ -269,6 +277,9 @@ class CaptionConfig:
     # Below this, a crop carries no describable detail and the model invents.
     min_crop_px: int = 96
     force_backend: str | None = None
+    # Recorded on every caption, so a mix of models in one index can be
+    # told apart later.
+    name: str = "florence2-base-ft"
 
 
 @dataclass(frozen=True)
@@ -340,6 +351,18 @@ class Config:
     @property
     def audio_model_dir(self) -> Path:
         return self.model_dir / self.audio.model_dir
+
+    @property
+    def large_captions(self) -> "Config":
+        """This configuration with the larger caption model selected."""
+        import dataclasses as _dc
+
+        return _dc.replace(
+            self,
+            caption=_dc.replace(
+                self.caption, model_dir="florence2-large", name="florence2-large-ft"
+            ),
+        )
 
     @property
     def has_caption_model(self) -> bool:

@@ -131,12 +131,12 @@ COMPONENTS: tuple[Component, ...] = (
     ),
     Component(
         key="captions",
-        title="Descriptions (Florence-2)",
+        title="Descriptions (Florence-2 base)",
         why="describes what a person is doing, so actions become searchable",
         approx_mb=275,
         ready=lambda cfg: cfg.has_caption_model,
-        packages=("huggingface_hub",),
-        command=("tools/fetch_caption_model.py", "--out"),
+        packages=("huggingface_hub", "transformers"),
+        command=("tools/fetch_caption_model.py", "--model", "base", "--out"),
         optional=True,
     ),
 )

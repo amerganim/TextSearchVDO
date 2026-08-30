@@ -28,6 +28,16 @@ from pathlib import Path
 
 REPO = "onnx-community/Florence-2-base-ft"
 
+# base is the default because it is what a CPU can keep up with. large is
+# roughly five times the weights and names things base only gestures at - a
+# real crop that base called "a large black object" is the reason somebody
+# would want it. It goes in its own directory so both can be installed and
+# switched between without re-downloading.
+MODELS = {
+    "base": ("onnx-community/Florence-2-base-ft", "florence2", 275),
+    "large": ("onnx-community/Florence-2-large-ft", "florence2-large", 1540),
+}
+
 # Each graph, and the file suffix per precision. The decoder is "quantized"
 # rather than "int8" in this repo; the others follow the usual naming.
 GRAPHS = {
@@ -92,12 +102,20 @@ def main() -> int:
     )
     ap.add_argument("--out", type=Path, default=Path("data/models"))
     ap.add_argument("--precision", choices=["int8", "fp32"], default="int8")
-    ap.add_argument("--repo", default=REPO)
+    ap.add_argument("--model", default="base", choices=sorted(MODELS),
+                    help="base is the CPU-affordable one; large describes more")
+    ap.add_argument("--repo", default=None,
+                    help="override the repository for --model")
     args = ap.parse_args()
 
     from huggingface_hub import hf_hub_download
 
-    target = args.out / "florence2"
+    repo, folder, approx_mb = MODELS[args.model]
+    if args.repo:
+        repo = args.repo
+    args.repo = repo
+    target = args.out / folder
+    print(f"{args.model}: about {approx_mb} MB")
     target.mkdir(parents=True, exist_ok=True)
     print(f"fetching {args.repo} ({args.precision})")
 

@@ -426,6 +426,24 @@ instead, so motion, objects, identity and semantic search are all answering
 questions while it works, and the app says which of the two empty screens the
 reader is looking at.
 
+Two sizes are installable. base is the default because it is what a CPU
+keeps up with; large names what base only gestures at. On one real crop
+base said *"a mannequin standing on a chair"* and large said *"a woman
+standing on a set of stairs, a pink hat, holding a metal pole"*. Three
+times the cost per image, so it is opt-in.
+
+The key-value cache shape is read from the decoder graph rather than
+held as constants — base is 6 layers of 12 heads, large is 12 of 16, and
+hardcoding base’s numbers is exactly why large was listed as available
+while not working: it loaded, ran, and produced nothing usable because
+every cache tensor was the wrong shape.
+
+An empty answer is retried with a simpler prompt. Large returns nothing
+at all for some crops under the most demanding one while answering the
+same image under a shorter prompt; stored as-is that is worse than a
+failure, since the tracklet counts as captioned, is never retried, and
+can never be found by anything it contains.
+
 Its value is words that no other stage can produce. Detection knows a person
 is there; identity knows who; zones know where. Only a caption can say *red
 bag*, *pink shirt*, or *medicine bottle* - and once it does, those become

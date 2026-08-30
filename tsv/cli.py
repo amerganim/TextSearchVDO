@@ -388,13 +388,19 @@ def cmd_caption(args: argparse.Namespace) -> int:
     from tsv.search import rebuild_text_index
 
     cfg = _config(args)
+    if args.large:
+        cfg = cfg.large_captions
     if not cfg.has_caption_model:
         print(f'no captioning model in {cfg.caption_model_dir}')
-        print('fetch it with:  .venv-export/Scripts/python tools/fetch_caption_model.py')
+        size = "large" if args.large else "base"
+        print('fetch it with:  .venv-export/Scripts/python tools/fetch_caption_model.py '
+              f'--model {size}')
         return 1
 
     conn = db.open_db(cfg.db_path)
-    print('describing tracklets (about 6 seconds each on a CPU)')
+    seconds = 15 if args.large else 6
+    print(f'describing tracklets with {cfg.caption.name} '
+          f'(about {seconds} seconds each on a CPU)')
 
     def on_progress(done: int, total: int) -> None:
         # A plain line every few, rather than a carriage-return spinner:
@@ -944,6 +950,9 @@ def main(argv: list[str] | None = None) -> int:
     p_caption = sub.add_parser("caption", help="describe what people are doing (slow)")
     p_caption.add_argument("--force", action="store_true", help="re-caption everything")
     p_caption.add_argument("--limit", type=int, help="stop after this many")
+    p_caption.add_argument("--large", action="store_true",
+                           help="use Florence-2 large: names things base only "
+                                "gestures at, at roughly three times the cost")
     p_caption.set_defaults(func=cmd_caption)
 
     p_setup = sub.add_parser("setup", help="fetch or build the models (run this first)")
