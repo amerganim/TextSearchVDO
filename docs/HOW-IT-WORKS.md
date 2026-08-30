@@ -602,9 +602,48 @@ seconds that exist are a sliver. It plays, and it lies about what it is. The
 timestamps are rebased to zero — a clip that reported `duration: 180.4` before
 the fix reports `12.6` after it.
 
-The codec is whatever the camera recorded. Phones record HEVC and play HEVC,
-so copying is the right default; re-encoding to be safe would turn a 0.02
-second operation into several.
+### The codec, and the one client that cannot play it
+
+Copying preserves whatever the camera recorded, which for a phone means HEVC —
+and phones play HEVC, so that is right by default. Desktop Firefox does not,
+so a client that knows it cannot decode HEVC asks for H.264 and gets it. The
+browser asks, rather than the server guessing from a user agent, because only
+the browser knows; and it asks *before* the first attempt where it can, with a
+single retry if playback fails anyway, since `canPlayType` says "probably" and
+means "possibly".
+
+Re-encoding is the only expensive thing in this module. Measured on twelve
+seconds of 960×1080 HEVC:
+
+| | time | size |
+|---|---:|---:|
+| copy, no re-encode | 0.01s | 0.82 MB |
+| libx264 veryfast crf20 | 1.00s | 3.98 MB |
+| libx264 veryfast crf23 | 0.89s | 2.85 MB |
+| **libx264 veryfast crf28** | **0.84s** | **1.69 MB** |
+| libx264 veryfast crf34 | 1.80s | 0.93 MB |
+| h264_qsv (Intel iGPU) | *will not open on this machine* |
+
+crf 28 because the point is sending less over WiFi: same time as crf 23 for
+forty percent less data, on footage already compressed once by the camera.
+The hardware encoder is listed by ffmpeg and refuses to open — the same
+"listed is not usable" rule the backend layer lives by.
+
+Timing is where this goes wrong, and both obvious approaches fail. Passing the
+source timestamps through is rejected outright. Clearing them and letting the
+encoder number frames gives `non-strictly-monotonic PTS`. Computing them from
+real presentation time *still* fails on a variable frame rate recording,
+because two frames closer together than one tick of the encoder's time base
+collapse onto the same value and the muxer refuses: `non monotonically
+increasing dts to muxer in stream 0: 6000 >= 6000`. Counting the frames at a
+constant rate is the one thing that cannot collide. The cost is that a
+variable-rate source becomes constant-rate — for this project's footage,
+15.000009 fps against 15, or a tenth of a millisecond over a twelve second
+clip.
+
+The frame rate itself needs cleaning first: this footage reports its rate as
+26996000/1799749, which becomes the encoder's time base denominator and is
+rejected with a bare `Invalid argument` naming nothing at all.
 
 ### Why there is no Android app
 

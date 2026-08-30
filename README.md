@@ -231,10 +231,18 @@ opens *behind* the window. The app says so when you press Start, because
 otherwise this looks like the feature simply not working.
 
 Tapping a result plays a **clip** of that moment rather than the whole
-recording: measured on real footage, 0.68 MB and 0.02 seconds against
+recording: measured on real footage, 0.82 MB and 0.01 seconds against
 124 MB. Nothing is re-encoded, so it costs about what reading the file
 costs. *Whole recording* is one click away when what happened next is the
 point.
+
+Phones record **HEVC**, and phones play it, so the clip keeps whatever
+the camera used. Desktop Firefox does not play HEVC — there the browser
+says so and the clip comes back as H.264 instead, at 1.69 MB and 0.84
+seconds. The browser asks rather than the server guessing from a user
+agent, and it asks up front where it can, falling back once if playback
+fails anyway (`canPlayType` says "probably" and means "possibly").
+Asking for H.264 from a recording that already is H.264 costs nothing.
 
 **No Android app is needed, and one would not have helped.** The page is
 already responsive, already streams video by HTTP range request, and already

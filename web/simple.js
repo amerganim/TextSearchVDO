@@ -23,6 +23,8 @@ const state = {
   // videos for what somebody was doing would silently find nothing.
   toCaption: 0, captionReady: false, captionStarted: false, captioning: false,
   zones: 0,
+  // Asked once at startup rather than per clip; it cannot change.
+  canPlayHevc: true,
   // The controller for a transfer in flight, so it can be called off.
   uploading: null,
 };
@@ -526,6 +528,28 @@ async function runSearch() {
  */
 const CLIP_SECONDS = 12;
 
+/** Whether this browser can decode HEVC, which is what phones record.
+ *
+ * Only the browser knows, so the client asks rather than the server guessing
+ * from a user agent string. Phones play HEVC natively and desktop Firefox
+ * does not, so this is mostly about the second case.
+ *
+ * canPlayType is famously optimistic - "probably" is not a promise - which is
+ * why there is also a fallback when playback actually fails.
+ */
+function canPlayHevc() {
+  const probe = document.createElement("video");
+  return Boolean(
+    probe.canPlayType('video/mp4; codecs="hvc1.1.6.L93.B0"')
+    || probe.canPlayType('video/mp4; codecs="hev1.1.6.L93.B0"')
+  );
+}
+
+function clipUrl(videoId, t, asH264) {
+  return `/api/clip/${videoId}?t=${encodeURIComponent(t)}`
+    + `&seconds=${CLIP_SECONDS}${asH264 ? "&h264=1" : ""}`;
+}
+
 function openPlayer(videoId, t, caption) {
   const video = $("video");
   $("player-caption").textContent = caption || "";
@@ -537,12 +561,37 @@ function openPlayer(videoId, t, caption) {
   // A clip of the moment, not the recording it came from. Handing a phone a
   // 124 MB file and asking it to seek is the difference between watching
   // something and waiting for it.
-  const source = `/api/clip/${videoId}?t=${encodeURIComponent(t)}&seconds=${CLIP_SECONDS}`;
+  //
+  // Re-encoding is asked for up front where the browser admits it cannot
+  // decode HEVC, so the common case never pays for a failed attempt first.
+  const source = clipUrl(videoId, t, !state.canPlayHevc);
   if (video.dataset.source !== source) {
     video.dataset.source = source;
+    video.dataset.retried = "";
     video.src = source;
   }
   video.play().catch(() => {});
+}
+
+/** Try again in H.264 when a clip will not play.
+ *
+ * canPlayType says "probably" and means "possibly". A browser that claims
+ * HEVC and then fails on a real file is common enough - hardware decoding
+ * that is not there, a codec behind a flag - that the honest answer is to
+ * find out by trying, once.
+ */
+function retryAsH264() {
+  const video = $("video");
+  const button = $("player-whole");
+  if (video.dataset.retried === "yes" || !video.dataset.source) return false;
+  if (video.dataset.source.includes("h264=1")) return false;
+
+  video.dataset.retried = "yes";
+  const source = clipUrl(button.dataset.videoId, Number(button.dataset.t || 0), true);
+  video.dataset.source = source;
+  video.src = source;
+  video.play().catch(() => {});
+  return true;
 }
 
 /** Fall back to the whole recording, for when the clip is not enough.
@@ -638,6 +687,16 @@ async function boot() {
 
   $("player-close").onclick = closePlayer;
   $("player-whole").onclick = openWholeRecording;
+
+  state.canPlayHevc = canPlayHevc();
+  $("video").addEventListener("error", () => {
+    if (retryAsH264()) return;
+    notice(
+      "This browser cannot play that recording's format. It will play on a "
+      + "phone, or in Chrome or Edge.",
+      "warn",
+    );
+  });
   $("player-backdrop").onclick = (e) => {
     if (e.target === $("player-backdrop")) closePlayer();
   };

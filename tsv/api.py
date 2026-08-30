@@ -1268,12 +1268,21 @@ def create_app(cfg: Config = DEFAULT, share: bool = False) -> FastAPI:
         video_id: int,
         t: float = Query(..., description="seconds into the recording"),
         seconds: float = Query(10.0, gt=0, le=60),
+        h264: bool = Query(
+            False,
+            description="re-encode to H.264 for a client that cannot decode HEVC",
+        ),
     ) -> Response:
         """A few seconds around a moment, rather than the whole recording.
 
         What a phone should get when somebody taps a result. Copying packets
         rather than re-encoding makes this about as expensive as reading the
         file, and turns 124 MB into under one.
+
+        `h264=1` is for a client that cannot decode what the camera recorded.
+        The client asks rather than the server guessing, because only the
+        browser knows what it can play - and where the recording is already
+        H.264 the flag costs nothing.
         """
         row = conn.execute(
             "SELECT path, duration FROM videos WHERE id = ?", (video_id,)
@@ -1292,7 +1301,7 @@ def create_app(cfg: Config = DEFAULT, share: bool = False) -> FastAPI:
             t = max(0.0, min(float(t), max(0.0, duration - seconds)))
 
         try:
-            data = cut(Path(row["path"]), at=t, seconds=seconds)
+            data = cut(Path(row["path"]), at=t, seconds=seconds, web_safe=h264)
         except FileNotFoundError:
             raise HTTPException(410, "source file has moved or been deleted") from None
         except ValueError as exc:

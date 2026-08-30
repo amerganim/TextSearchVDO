@@ -116,3 +116,59 @@ def test_an_unknown_recording_is_404(clip_client):
 def test_an_absurd_length_is_rejected_by_the_endpoint(clip_client):
     assert clip_client.get("/api/clip/1?t=1&seconds=600").status_code == 422
     assert clip_client.get("/api/clip/1?t=1&seconds=0").status_code == 422
+
+
+# ---------- the H.264 fallback ----------
+#
+# Phones record HEVC and play HEVC, so copying is right by default. Desktop
+# Firefox does not play it, and canPlayType is optimistic enough that a
+# browser can claim HEVC and then fail on a real file - so a client has to be
+# able to ask for something it is certain of.
+
+def test_asking_for_web_safe_output_from_an_h264_source_costs_nothing(day_clip):
+    """The sample footage is already H.264, so the flag must fall through to
+    the copy path rather than re-encoding for no reason."""
+    from tsv.clips import source_codec
+
+    assert source_codec(Path(day_clip["path"])) == "h264"
+
+    copied = cut(Path(day_clip["path"]), at=15.0, seconds=6.0)
+    safe = cut(Path(day_clip["path"]), at=15.0, seconds=6.0, web_safe=True)
+    assert safe == copied, "an H.264 source was needlessly re-encoded"
+
+
+def test_a_frame_rate_an_encoder_would_reject_is_cleaned_up():
+    """Real recordings report absurd rates.
+
+    This project's phone footage claims 26996000/1799749 - which is 15 fps to
+    six decimal places, and which becomes the encoder's time base denominator
+    where libx264 rejects it with a bare "Invalid argument" naming nothing.
+    """
+    from fractions import Fraction
+
+    from tsv.clips import _clean_rate
+
+    assert _clean_rate(Fraction(26996000, 1799749)) == Fraction(15, 1)
+
+    # NTSC rates are spelled this way on purpose and must survive intact.
+    assert _clean_rate(Fraction(30000, 1001)) == Fraction(30000, 1001)
+    assert _clean_rate(Fraction(24000, 1001)) == Fraction(24000, 1001)
+
+    # Nonsense falls back rather than raising.
+    for bad in (None, 0, -5, 100000):
+        assert _clean_rate(bad) == Fraction(30, 1)
+
+
+def test_the_endpoint_accepts_the_h264_flag(clip_client):
+    plain = clip_client.get("/api/clip/1?t=20&seconds=6")
+    forced = clip_client.get("/api/clip/1?t=20&seconds=6&h264=1")
+    assert plain.status_code == forced.status_code == 200
+    assert probe(forced.content), "the fallback did not produce a video"
+
+
+def test_web_safe_covers_what_a_browser_can_decode():
+    """The list is what decides whether a re-encode happens at all."""
+    from tsv.clips import WEB_SAFE
+
+    assert "h264" in WEB_SAFE
+    assert "hevc" not in WEB_SAFE, "HEVC would never be converted"

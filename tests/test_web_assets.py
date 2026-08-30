@@ -374,3 +374,30 @@ def test_sharing_can_be_turned_on_without_a_terminal():
     assert "initShare()" in _js("simple.js")
     # Windows blocks the first bind, and its dialog opens behind the app.
     assert "If Windows asks" in js
+
+
+def test_the_client_asks_for_h264_only_when_it_needs_it():
+    """Only the browser knows what it can decode, so it asks rather than the
+    server guessing from a user agent.
+
+    Phones both record and play HEVC, so the common case must not pay for a
+    conversion it does not need.
+    """
+    js = _js("simple.js")
+    assert "canPlayHevc" in js
+    assert 'codecs="hvc1' in js, "HEVC support is never actually tested for"
+    assert "h264=1" in js
+    assert "state.canPlayHevc" in js
+
+
+def test_a_clip_that_will_not_play_is_retried_once_in_h264():
+    """canPlayType says "probably" and means "possibly".
+
+    A browser that claims HEVC and then fails on a real file is common enough
+    - missing hardware decoding, a codec behind a flag - that the honest
+    answer is to find out by trying.
+    """
+    js = _js("simple.js")
+    assert "retryAsH264" in js
+    assert 'dataset.retried' in js, "nothing stops it retrying forever"
+    assert 'addEventListener("error"' in js, "playback failure is not noticed"
