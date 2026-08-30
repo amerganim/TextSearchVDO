@@ -459,7 +459,7 @@
 <div class="page">
 
   <header class="masthead">
-    <p class="eyebrow">TextSearchVDO &middot; Reference &middot; 27 Aug 2026</p>
+    <p class="eyebrow">TextSearchVDO &middot; Reference &middot; 30 Aug 2026</p>
     <h1>Searching a week of footage</h1>
     <p class="thesis">
       Drop a recording on a window, ask when your son went outside, get the timestamp
@@ -468,10 +468,10 @@
       verify</em>. It is not summarise-then-search.
     </p>
     <dl class="readout">
-      <div><dt>Built</dt><dd class="lit">Stages 0&ndash;3</dd></div>
-      <div><dt>Answering</dt><dd class="lit">Partial</dd></div>
-      <div><dt>Tests</dt><dd>298 passing</dd></div>
-      <div><dt>Models</dt><dd>5 &middot; no LLM</dd></div>
+      <div><dt>Built</dt><dd class="lit">Stages 0&ndash;5</dd></div>
+      <div><dt>Answering</dt><dd class="lit">Built</dd></div>
+      <div><dt>Tests</dt><dd>617 passing</dd></div>
+      <div><dt>Models</dt><dd>7 &middot; no LLM</dd></div>
       <div><dt>Baseline HW</dt><dd>CPU / iGPU</dd></div>
     </dl>
   </header>
@@ -483,7 +483,7 @@
       <li><a href="#cascade">The cascade</a></li>
       <li><a href="#stage0">Stage 0 mechanism</a></li>
       <li><a href="#models">The models</a></li>
-      <li><a href="#nollm">Why no LLM</a></li>
+      <li><a href="#nollm">No LLM in answers</a></li>
       <li><a href="#findings">What testing found</a></li>
       <li><a href="#app">The app</a></li>
       <li><a href="#phases">Where it stands</a></li>
@@ -533,13 +533,14 @@
             refuses a stranger at 0.034. Returns exact timestamps.</span>
           </div>
         </div>
-        <div class="tier tier--partial">
+        <div class="tier tier--solid">
           <q>When did father take his medicine?</q>
           <div class="verdict">
-            <span class="chip">Not built</span>
-            <span class="why">Fine-grained action on a small object. Needs a
-            vision-language model captioning person crops, which nothing here does. The
-            one genuinely missing capability.</span>
+            <span class="chip">Built</span>
+            <span class="why">Fine-grained action on a small object. This was the one
+            genuinely missing capability, and it is the reason Florence-2 captioning
+            exists: no detector has a class for <em>medicine</em>, so the word has to come
+            from a description of what a tracked person is doing.</span>
           </div>
         </div>
         <div class="tier tier--unknown">
@@ -564,7 +565,7 @@
       </p>
 
       <figure>
-        <svg viewBox="0 0 890 300" role="img" aria-label="Five pipeline stages left to right; the share of total footage each must process shrinks from 100 percent at motion segmentation to about 4 percent at the vision-language stage, which is not built.">
+        <svg viewBox="0 0 890 300" role="img" aria-label="Five pipeline stages left to right; the share of total footage each must process shrinks from 100 percent at motion segmentation to about 4 percent at the captioning and speech stage.">
           <defs>
             <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
               <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
@@ -606,22 +607,21 @@
 
           <line x1="676" y1="168" x2="720" y2="168" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
 
-          <rect x="732" y="168" width="104" height="28" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="4 3" opacity=".55"/>
-          <text x="784" y="158" text-anchor="middle" font-size="11" font-weight="700" fill="currentColor" opacity=".7" class="m">~4%</text>
+          <rect x="732" y="168" width="104" height="28" class="acc" opacity=".92"/>
+          <text x="784" y="158" text-anchor="middle" font-size="11" font-weight="700" fill="currentColor" class="m">~4%</text>
           <text x="784" y="218" text-anchor="middle" font-size="11" font-weight="700" fill="currentColor" class="m">STAGE 4</text>
-          <text x="784" y="236" text-anchor="middle" font-size="12.5" fill="currentColor" class="s">VLM captions,</text>
-          <text x="784" y="252" text-anchor="middle" font-size="12.5" fill="currentColor" class="s">audio</text>
+          <text x="784" y="236" text-anchor="middle" font-size="12.5" fill="currentColor" class="s">Captions</text>
+          <text x="784" y="252" text-anchor="middle" font-size="12.5" fill="currentColor" class="s">+ speech</text>
 
           <rect x="44" y="20" width="14" height="11" class="acc" opacity=".92"/>
           <text x="66" y="30" font-size="10.5" fill="currentColor" class="m">built and measured</text>
-          <rect x="212" y="20" width="14" height="11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="4 3" opacity=".55"/>
-          <text x="234" y="30" font-size="10.5" fill="currentColor" class="m">not built</text>
         </svg>
         <figcaption>
           Bar height is the share of total wall-clock footage a stage must process, on a
-          perceptual scale. Stages 0 to 3 are built; the ~27% pass-through is measured.
-          Stage 4's captioning and audio work is the remaining gap, and would run on the
-          small slice of footage that reaches it.
+          perceptual scale. Every stage shown is built, and the ~27% pass-through is
+          measured. Stage 4 earns its place by running on the small slice that reaches it:
+          captioning a whole day would be an overnight batch, captioning what survives
+          Stage 0 is not.
         </figcaption>
       </figure>
     </section>
@@ -924,8 +924,9 @@
       </p>
       <p>
         It is the same local server in a WebView2 frame rather than a second
-        implementation, so the window, a browser and the planned Android client all talk to
-        the same endpoints. What the window adds is a native file dialog returning real
+        implementation, so the window, a browser and a paired phone all talk to the same
+        endpoints. That is why there is no Android app to install: the phone gets the
+        same application over the local network, behind a six-digit pairing code. What the window adds is a native file dialog returning real
         paths, so <strong>a video is indexed where it already lives</strong> rather than
         being uploaded to the machine it is already on.
       </p>
