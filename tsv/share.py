@@ -157,13 +157,17 @@ def network_category() -> str:
 def firewall_allows(port: int) -> bool | None:
     """Whether Windows would let a phone reach this port.
 
-    True, False, or None when it cannot be determined. Worth asking, because
-    this is the failure that looks exactly like success: the server binds,
-    the address is printed, the QR code scans - and Windows drops every packet
-    from the phone without a word to anybody. Somebody in that position
-    concludes the feature is broken, and they are not wrong to.
+    True when a rule plainly allows it, False when no such rule was found, and
+    None when it cannot be told.
 
-    Testing it by connecting is not possible from here: a connection from this
+    False is a *hint*, not a verdict, and the wording around it has to say so.
+    Windows has more ways to permit traffic than this query sees - rules
+    scoped to a program rather than a port, group policy, an allowance made
+    once from a popup - and a phone here reached the pairing page with no
+    matching rule at all. Reported as certainty it sends somebody to fix a
+    firewall that was never the problem.
+
+    Testing it properly is not possible from here: a connection from this
     machine to its own address never touches the firewall.
     """
     if sys.platform != "win32":
@@ -196,6 +200,23 @@ def firewall_allows(port: int) -> bool | None:
     if answer.startswith("no"):
         return False
     return None
+
+
+def port_in_use(port: int) -> bool:
+    """Whether something is already listening here.
+
+    Worth asking before binding. A second `tsv share` on a taken port cannot
+    get the socket, but uvicorn logs that and the process lingers - so two
+    instances sat there, one serving the phone and one printing to the
+    console, and the code on screen was not the code being checked.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
+        try:
+            sock.bind(("0.0.0.0", port))
+        except OSError:
+            return True
+    return False
 
 
 def firewall_command(port: int) -> str:
@@ -286,33 +307,74 @@ def load_key(data_dir: Path) -> bytes:
 
 # ---------- pairing codes ----------
 
-class Pairing:
-    """The code shown on the PC, and the guessing limit around it."""
+def _setting(conn: sqlite3.Connection, key: str) -> str | None:
+    row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else None
 
-    def __init__(self) -> None:
-        self.code = ""
-        self.attempts = 0
-        self.rotate()
+
+def _set_setting(conn: sqlite3.Connection, key: str, value: str) -> None:
+    conn.execute(
+        "INSERT INTO settings(key, value) VALUES (?,?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (key, value),
+    )
+    conn.commit()
+
+
+class Pairing:
+    """The code shown on the PC, and the guessing limit around it.
+
+    Kept in the database rather than in memory, and that is the whole point.
+    Held per-process, two instances of the application had two different
+    codes: the console printed one, the phone was talking to the other, and
+    typing either was refused with no explanation. Anything that can be
+    running twice cannot hold a shared secret in a local variable.
+
+    Reading on every access rather than caching, for the same reason - a
+    cached copy is a second source of truth and goes stale the moment the
+    other process rotates the code.
+    """
+
+    CODE_KEY = "pairing_code"
+    ATTEMPTS_KEY = "pairing_attempts"
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+        if not _setting(conn, self.CODE_KEY):
+            self.rotate()
+
+    @property
+    def code(self) -> str:
+        return _setting(self._conn, self.CODE_KEY) or self.rotate()
+
+    @property
+    def attempts(self) -> int:
+        try:
+            return int(_setting(self._conn, self.ATTEMPTS_KEY) or 0)
+        except ValueError:
+            return 0
 
     def rotate(self) -> str:
         # secrets, not random: this is a credential for the rest of the index.
-        self.code = f"{secrets.randbelow(10 ** CODE_DIGITS):0{CODE_DIGITS}d}"
-        self.attempts = 0
-        return self.code
+        code = f"{secrets.randbelow(10 ** CODE_DIGITS):0{CODE_DIGITS}d}"
+        _set_setting(self._conn, self.CODE_KEY, code)
+        _set_setting(self._conn, self.ATTEMPTS_KEY, "0")
+        return code
 
     def check(self, offered: str) -> bool:
         """Compare in constant time, and rotate once guessing starts."""
         offered = (offered or "").strip().replace(" ", "").replace("-", "")
-        ok = hmac.compare_digest(offered, self.code)
-        if ok:
+        if hmac.compare_digest(offered, self.code):
             # A code is good for one device. The next phone needs a new one,
             # so a code overheard once does not stay useful.
             self.rotate()
             return True
 
-        self.attempts += 1
-        if self.attempts >= MAX_ATTEMPTS:
+        attempts = self.attempts + 1
+        if attempts >= MAX_ATTEMPTS:
             self.rotate()
+        else:
+            _set_setting(self._conn, self.ATTEMPTS_KEY, str(attempts))
         return False
 
 

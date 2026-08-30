@@ -112,9 +112,9 @@ def test_a_code_works_once(shared):
     assert second.post("/api/pair", json={"code": code}).status_code == 403
 
 
-def test_guessing_throws_the_code_away():
+def test_guessing_throws_the_code_away(conn):
     """Six digits is a million, which only holds up if guessing is limited."""
-    pairing = Pairing()
+    pairing = Pairing(conn)
     original = pairing.code
     wrong = "000000" if original != "000000" else "111111"
 
@@ -126,8 +126,8 @@ def test_guessing_throws_the_code_away():
     assert pairing.code != original, "an attacker keeps a fixed target"
 
 
-def test_a_code_is_accepted_however_it_was_typed():
-    pairing = Pairing()
+def test_a_code_is_accepted_however_it_was_typed(conn):
+    pairing = Pairing(conn)
     code = pairing.code
     assert pairing.check(f"{code[:3]} {code[3:]}") is True
 
@@ -345,3 +345,90 @@ def test_the_firewall_rule_covers_every_profile():
     from tsv.share import firewall_command
 
     assert "-Profile Any" in firewall_command(8000)
+
+
+# ---------- one code, however many processes ----------
+
+def test_two_instances_agree_about_the_code(tmp_path):
+    """Held in memory the code was per-process.
+
+    Two instances over the same index printed two different codes: the console
+    showed one, the phone was talking to the other, and typing either was
+    refused with no explanation. Anything that can run twice cannot keep a
+    shared secret in a local variable.
+    """
+    cfg = dataclasses.replace(DEFAULT, data_dir=tmp_path)
+    db.open_db(cfg.db_path).close()
+
+    first = create_app(cfg, share=True)
+    second = create_app(cfg, share=True)
+    assert first.state.pairing_code() == second.state.pairing_code()
+
+
+def test_a_code_from_one_instance_is_accepted_by_another(tmp_path):
+    cfg = dataclasses.replace(DEFAULT, data_dir=tmp_path)
+    db.open_db(cfg.db_path).close()
+
+    shown_by = create_app(cfg, share=True)
+    talking_to = create_app(cfg, share=True)
+
+    client = TestClient(talking_to, follow_redirects=False)
+    response = client.post(
+        "/api/pair", json={"code": shown_by.state.pairing_code(), "name": "phone"}
+    )
+    assert response.status_code == 200
+
+
+def test_rotating_in_one_instance_is_seen_by_the_other(tmp_path):
+    """Otherwise the other keeps offering a code that no longer works."""
+    cfg = dataclasses.replace(DEFAULT, data_dir=tmp_path)
+    db.open_db(cfg.db_path).close()
+
+    first = create_app(cfg, share=True)
+    second = create_app(cfg, share=True)
+    before = first.state.pairing_code()
+
+    TestClient(first, follow_redirects=False).post(
+        "/api/pair", json={"code": before, "name": "phone"}
+    )
+    assert second.state.pairing_code() != before
+    assert second.state.pairing_code() == first.state.pairing_code()
+
+
+def test_the_code_survives_a_restart(tmp_path):
+    """A phone part-way through typing should not be defeated by the app
+    being reopened."""
+    cfg = dataclasses.replace(DEFAULT, data_dir=tmp_path)
+    db.open_db(cfg.db_path).close()
+
+    code = create_app(cfg, share=True).state.pairing_code()
+    assert create_app(cfg, share=True).state.pairing_code() == code
+
+
+def test_a_port_already_in_use_is_detected():
+    """A second `tsv share` cannot get the socket, but uvicorn only logs that
+    and the process lingers - printing a code nothing is checking."""
+    import socket as _socket
+
+    from tsv.share import port_in_use
+
+    with _socket.socket() as held:
+        held.bind(("0.0.0.0", 0))
+        held.listen(1)
+        taken = held.getsockname()[1]
+        assert port_in_use(taken) is True
+
+    # Freed again once nothing holds it.
+    assert port_in_use(taken) is False
+
+
+def test_the_firewall_hint_is_offered_as_a_hint():
+    """Windows permits traffic in ways a port-rule query cannot see, and a
+    phone here reached the pairing page with no matching rule at all."""
+    import inspect
+
+    from tsv import share
+
+    doc = inspect.getdoc(share.firewall_allows) or ""
+    assert "hint" in doc.lower()
+    assert "not a verdict" in doc.lower()

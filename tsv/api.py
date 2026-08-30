@@ -109,7 +109,7 @@ def create_app(cfg: Config = DEFAULT, share: bool = False) -> FastAPI:
 
     jobs = JobRunner()
     share_key = load_key(cfg.data_dir) if share else b""
-    pairing = Pairing() if share else None
+    pairing = Pairing(conn) if share else None
     # The LAN listener, when there is one. A dict rather than a nonlocal so
     # the handlers below can replace it without rebinding a closure.
     lan: dict = {}
@@ -233,8 +233,9 @@ def create_app(cfg: Config = DEFAULT, share: bool = False) -> FastAPI:
 
             fixer = firewall_fixer()
             warnings.append(
-                "Windows Firewall is not letting anything reach this port, so "
-                "a phone will scan the code and then sit there. "
+                "No firewall rule was found for this port. That may be fine - "
+                "Windows allows traffic in ways this cannot see - but if the "
+                "phone loads nothing at all, it is the first thing to try. "
                 + (
                     f"Fix it by double-clicking {fixer.name} in the app's "
                     "folder and saying yes to the prompt."

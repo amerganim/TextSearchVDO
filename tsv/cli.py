@@ -747,7 +747,21 @@ def cmd_share(args: argparse.Namespace) -> int:
     from tsv.api import create_app
     from tsv.share import describe_addresses, local_addresses
 
+    from tsv.share import port_in_use
+
     cfg = _config(args)
+
+    # Refuse rather than compete. A second instance cannot get the socket, but
+    # it stays alive printing a pairing code that nothing is checking - which
+    # is indistinguishable, from the phone, from the code simply being wrong.
+    if port_in_use(args.port):
+        print()
+        print(f"  Something is already using port {args.port}.")
+        print("  If that is this app, it is already sharing - use the address")
+        print("  and code it printed. Otherwise pass --port to pick another.")
+        print()
+        return 1
+
     addresses = local_addresses()
     offer, warnings = describe_addresses(addresses)
 
@@ -787,16 +801,15 @@ def cmd_share(args: argparse.Namespace) -> int:
     from tsv.share import firewall_allows, firewall_command, firewall_fixer
 
     if firewall_allows(port) is False:
-        print("  Windows Firewall is not letting anything reach this port, so")
-        print("  the phone will scan the code and then sit there.")
+        print("  No firewall rule was found for this port. That may be fine -")
+        print("  Windows allows traffic in ways this cannot see - but if the")
+        print("  phone loads nothing at all, it is the first thing to try.")
         print()
         fixer = firewall_fixer()
         if fixer is not None:
-            print(f"  Fix it by double-clicking:  {fixer.name}")
-            print("  (it asks Windows for permission, so say yes to the prompt)")
+            print(f"  Double-click {fixer.name} and say yes to the prompt.")
         else:
-            print("  Run this once in an Administrator PowerShell:")
-            print()
+            print("  In an Administrator PowerShell:")
             print("    " + firewall_command(port))
         print()
     _print_qr(url)

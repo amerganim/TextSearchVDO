@@ -11,7 +11,7 @@ import sqlite3
 import threading
 from pathlib import Path
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_info (
@@ -100,6 +100,16 @@ CREATE TABLE IF NOT EXISTS uploads (
     finished_at REAL
 );
 CREATE INDEX IF NOT EXISTS idx_upload_resume ON uploads(name, size, finished_at);
+
+-- Small shared state that has to survive a restart and, more importantly,
+-- be the same in every process. The pairing code lives here for exactly that
+-- reason: held in memory it was per-process, so a second instance printed a
+-- different code from the one the phone was actually talking to, and typing
+-- either was refused.
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 
 -- Phones that have been let in. A cookie names a row here, so revoking is a
 -- DELETE and takes effect on the very next request rather than whenever a

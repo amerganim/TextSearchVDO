@@ -296,6 +296,12 @@ Screen* gives it its own icon and a full-screen launch — on iOS as well as
 Android, which a native Android app would not have covered. One codebase, no
 store review.
 
+Only one thing needs to be running. The pairing code is kept with the
+index rather than in memory, so the desktop window and `tsv share` always
+show the same one — and `tsv share` refuses to start on a port already in
+use rather than lingering beside the real server printing a code nothing
+is checking.
+
 `python -m tsv devices` lists what has been paired; `--revoke <id>` removes
 one, and it is refused on its very next request.
 
