@@ -29,11 +29,90 @@ filters, fused into one ranked answer.
 the front door yesterday* returns two timestamps and the clips to play, rather
 than forty segments to scroll. Optional Florence-2 captioning describes what
 each person is doing, so *red bag* or *medicine bottle* become searchable
-words. Audio transcription is not built yet.
+words.
+
+**Phase 5 (working):** speech. Whisper reads what was said, gated by voice
+activity detection so silence costs almost nothing, and filtered on the
+model's own confidence — the failure mode of a transcript is not a gap, it is
+a fluent sentence nobody spoke. Speech joins the same index as everything
+else, so a name called out on camera is searchable even though no detector has
+a category for it.
 
 ## Getting started
 
-Double-click **setup.bat** once, then **TextSearchVDO.vbs**. Or from a prompt:
+### On a machine that has never seen this before
+
+A clone is about **10 MB**. It contains no environment and no models, so it
+cannot run until it has been set up once — double-clicking the launcher before
+that shows a dialog explaining as much, rather than starting.
+
+**Before you begin**
+
+| | |
+| --- | --- |
+| Python | 3.12 or newer, with *Add to PATH* ticked. Verified on 3.14. |
+| Disk | ~4 GB free during setup, ~1.5 GB once it finishes |
+| Network | Needed once, for setup only. Nothing after that. |
+| ffmpeg | Not needed — PyAV bundles it |
+
+**1. Get the code**
+
+```bash
+git clone https://github.com/amerganim/TextSearchVDO.git
+```
+
+Or download the ZIP from GitHub and unpack it. Either way, everything below
+happens inside that folder.
+
+**2. Run setup, once**
+
+Double-click **setup.bat**, and leave it alone for a while.
+
+It creates the environment, installs the runtime dependencies, downloads about
+a gigabyte of models, and finishes by putting a launcher with the app icon on
+your desktop. The console it opens is deliberate: this is the long step, and a
+progress log is the only honest way to show it is still working.
+
+It also builds a throwaway `.venv-export` carrying torch, which is why peak
+disk use is higher than the finished install. That environment exists so the
+*running* application does not carry torch: some models have to be exported
+rather than downloaded, because the CLIP ONNX published on the hub is one
+fused graph rather than the separate encoders this runtime uses. Pass
+`--clean` to `tsv setup` to delete it afterwards.
+
+When it works, the last lines are:
+
+```
+5 of 5 ready
+ready. Start it with:  python -m tsv app
+```
+
+If any line says **FAILED**, the app still opens — it runs with whatever is
+present and tells you which part is missing. Re-running `setup.bat` retries
+only what is absent.
+
+**3. Start it**
+
+Double-click **TextSearchVDO** on the desktop — the one with the blue icon.
+No console window should appear; if one does, something is wrong and
+`TextSearchVDO.bat` will show you what, because it can print.
+
+**4. Add a video and search it**
+
+Use **Add video** in the window. Indexing a clip runs the whole pipeline over
+it, and the first search afterwards should return moments rather than files.
+
+**5. Only if you want to use it from a phone**
+
+Double-click **allow-phone.bat** once and say yes to the administrator
+prompt. Windows Firewall blocks the phone silently otherwise — the address
+prints, the QR scans, and the phone then waits forever. See
+[Using it from a phone](#using-it-from-a-phone) for the rest.
+
+### From a command prompt instead
+
+The same three steps, for a machine where double-clicking is not how work
+gets done:
 
 ```bash
 py -3.14 -m venv .venv && .venv/Scripts/python -m pip install -r requirements.txt
@@ -43,16 +122,15 @@ py -3.14 -m venv .venv && .venv/Scripts/python -m pip install -r requirements.tx
 .venv/Scripts/python -m tsv setup
 ```
 
-`setup` fetches or builds all four models — object detection, faces, semantic
-search and descriptions — skipping whatever is already there. It is the only
-step that needs the internet, downloads roughly a gigabyte, and takes a few
-minutes.
+```bash
+.venv/Scripts/python -m tsv app
+```
 
-It builds a throwaway `.venv-export` to do it. That environment carries torch,
-and it exists so the *running* application does not: some model sets have to be
-exported rather than downloaded, because the CLIP ONNX on the hub is a single
-fused graph rather than the separate encoders this runtime uses. Pass `--clean`
-to delete it afterwards.
+`setup` fetches or builds all five model sets — object detection, faces,
+semantic search, speech and descriptions — skipping whatever is already there,
+so it is safe to re-run. `--clean` removes the export environment when it is
+done; `--detector yolox-tiny` picks the permissively licensed detector, which
+matters if you intend to ship this.
 
 ### Which detector, and why it decides whether you can sell this
 
