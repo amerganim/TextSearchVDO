@@ -433,3 +433,38 @@ def test_the_phone_home_screen_gets_a_raster_icon_too():
     html = (WEB / "app.html").read_text(encoding="utf-8")
     assert 'rel="apple-touch-icon"' in html
     assert (WEB / "icon-512.png").is_file()
+
+
+# ---------- the launchers Windows actually runs ----------
+
+def test_batch_and_script_launchers_keep_crlf_line_endings():
+    """cmd.exe cannot find a label in a file saved with plain LF.
+
+    "goto :elevated" falls straight through, and the script does nothing
+    while reporting nothing - which is how allow-phone.bat shipped: it looked
+    correct, ran silently, and left the firewall untouched. The user did
+    everything right twice before this was found.
+    """
+    root = WEB.parent
+    launchers = sorted(root.glob("*.bat")) + sorted(root.glob("*.vbs"))
+    assert launchers, "no launchers found"
+
+    for path in launchers:
+        raw = path.read_bytes()
+        lone = raw.count(b"\n") - raw.count(b"\r\n")
+        assert lone == 0, f"{path.name} has {lone} LF-only lines"
+
+
+def test_gitattributes_stops_a_clone_undoing_that():
+    """Fixing the working copy is not enough - git normalises on checkout."""
+    text = (WEB.parent / ".gitattributes").read_text(encoding="utf-8")
+    for pattern in ("*.bat", "*.vbs"):
+        assert f"{pattern} text eol=crlf" in text, pattern
+
+
+def test_the_firewall_script_avoids_line_continuations():
+    """A second fragility on top of the endings, and not worth tidier source:
+    a caret continuation changes how cmd.exe escapes the next line."""
+    body = (WEB.parent / "allow-phone.bat").read_text(encoding="utf-8")
+    for line in body.splitlines():
+        assert not line.rstrip().endswith("^"), line

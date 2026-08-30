@@ -169,6 +169,12 @@ makes more. It carries an icon because the files it sits next to cannot:
 Windows draws every `.vbs` with the same generic script glyph, so the
 thing to double-click looked identical to the thing not to.
 
+One warning for anyone editing the launchers: `.bat`, `.cmd` and `.vbs`
+files must keep **CRLF** line endings. `cmd.exe` cannot find a label in a
+file saved with plain LF — `goto :elevated` falls straight through and the
+script does nothing while reporting nothing. `.gitattributes` pins them so
+a clone cannot undo it.
+
 It points at **TextSearchVDO.vbs**, not the `.bat`. Both start the same
 app, but a `.bat` is run by `cmd.exe`, and `cmd.exe` shows a console window
 before anything else happens &mdash; no amount of `pythonw` suppresses that
